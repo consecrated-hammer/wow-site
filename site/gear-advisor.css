@@ -1,0 +1,238 @@
+/* Gear advisor — upgrade-track comparison grid. */
+
+.character-panel { margin-bottom: 28px; }
+.character-heading h2 { margin: 0 0 8px; font-family: var(--serif); font-size: 25px; font-weight: 400; }
+.character-heading p:not(.eyebrow) { margin: 0; color: var(--text-2); }
+.character-form {
+  display: grid;
+  grid-template-columns: minmax(110px, 0.65fr) minmax(180px, 1.4fr) minmax(180px, 1.4fr) auto;
+  gap: 12px;
+  align-items: end;
+  margin-top: 24px;
+}
+.character-form label { display: grid; gap: 7px; }
+.character-form label > span {
+  font-size: 11px;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.character-form input,
+.character-form select {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid var(--stone-600);
+  border-radius: var(--radius);
+  padding: 8px 11px;
+  color: var(--text);
+  background: var(--stone-800);
+  font: inherit;
+}
+.character-form input:focus,
+.character-form select:focus { outline: 2px solid var(--gold-500); outline-offset: 2px; }
+.button-primary,
+.button-secondary {
+  min-height: 42px;
+  border-radius: var(--radius);
+  padding: 8px 15px;
+  font: inherit;
+  cursor: pointer;
+}
+.button-primary { border: 1px solid var(--gold-500); background: var(--gold-700); color: #fff7df; }
+.button-secondary { border: 1px solid var(--stone-600); background: var(--stone-750); color: var(--text); }
+.button-primary:disabled,
+.button-secondary:disabled { cursor: wait; opacity: 0.58; }
+.character-status { min-height: 22px; margin: 14px 0 0; color: var(--gold-400); font-size: 13px; }
+.character-result-head { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin: 10px 0 18px; }
+.character-result-head h3 { margin: 0 0 3px; font-family: var(--serif); font-size: 24px; font-weight: 400; }
+.character-result-head p { margin: 0; color: var(--text-3); font-size: 12.5px; }
+.equipment-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.equipment-card { min-width: 0; border: 1px solid var(--stone-650, var(--stone-600)); border-radius: var(--radius); padding: 12px; background: rgba(0, 0, 0, 0.12); }
+.equipment-slot { display: block; margin-bottom: 8px; color: var(--text-3); font-size: 10px; letter-spacing: 0.13em; text-transform: uppercase; }
+.equipment-item { display: flex; gap: 11px; align-items: center; min-width: 0; }
+.equipment-item img { flex: 0 0 48px; border: 1px solid var(--stone-600); border-radius: 5px; background: var(--stone-800); }
+.equipment-item > div { min-width: 0; }
+.equipment-name { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+.equipment-level { display: block; margin-top: 2px; color: var(--text-2); font-size: 12px; }
+.quality-epic { color: var(--q-epic); }
+.quality-rare { color: var(--q-rare); }
+.quality-uncommon { color: var(--q-uncommon); }
+.quality-legendary { color: var(--q-legendary); }
+.character-upgrade { display: grid; gap: 6px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--stone-700); }
+.character-upgrade strong { font-family: var(--serif); font-size: 14px; font-weight: 400; color: var(--gold-400); }
+.upgrade-detail { color: var(--text-3); font-size: 11.5px; line-height: 1.45; }
+.upgrade-progress { display: grid; grid-template-columns: repeat(var(--rank-count, 6), 1fr); gap: 3px; }
+.upgrade-progress span { height: 4px; border-radius: 2px; background: var(--stone-650, var(--stone-600)); }
+.upgrade-progress .filled { background: var(--gold-500); box-shadow: 0 0 6px rgba(224, 184, 102, 0.28); }
+.season-upgrades { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--stone-700); }
+.season-upgrades summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+  cursor: pointer;
+  list-style: none;
+}
+.season-upgrades summary::-webkit-details-marker { display: none; }
+.season-upgrades summary::before {
+  content: '›';
+  color: var(--gold-500);
+  font-size: 18px;
+  line-height: 1;
+  transform: rotate(0deg);
+  transition: transform 0.12s ease;
+}
+.season-upgrades[open] summary::before { transform: rotate(90deg); }
+.season-upgrades-title { color: var(--text-2); font-size: 10px; font-weight: 600; letter-spacing: 0.13em; text-transform: uppercase; }
+.season-upgrades-count { margin-left: auto; color: var(--text-3); font-size: 10.5px; }
+.season-upgrades-content { padding-top: 8px; }
+.season-upgrade-list { display: grid; gap: 4px; }
+.season-upgrade-row {
+  display: grid;
+  grid-template-columns: minmax(74px, 0.8fr) minmax(95px, 1fr) minmax(120px, 1.25fr);
+  gap: 8px;
+  align-items: baseline;
+  padding: 5px 7px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.025);
+  font-size: 11.5px;
+}
+.season-upgrade-track { color: var(--track-colour, var(--text)); font-family: var(--serif); font-size: 13px; font-weight: 400; }
+.season-upgrade-rank { color: var(--text); font-variant-numeric: tabular-nums; }
+.season-upgrade-cost { color: var(--text-3); font-size: 10.5px; text-align: right; }
+
+.ga-controls {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  flex-wrap: wrap;
+  margin-bottom: 30px;
+}
+.ga-readout { display: flex; align-items: baseline; gap: 10px; white-space: nowrap; }
+.ga-readout label {
+  font-size: 12px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+.ga-readout output {
+  font-family: var(--serif);
+  font-size: 30px;
+  color: var(--gold-400);
+  min-width: 62px;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 0 16px rgba(224, 184, 102, 0.3);
+}
+
+.ga-slider {
+  flex: 1 1 260px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  height: 20px;
+  margin: 0;
+  cursor: pointer;
+}
+.ga-slider::-webkit-slider-runnable-track {
+  height: 3px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, var(--stone-600), var(--gold-700));
+}
+.ga-slider::-moz-range-track {
+  height: 3px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, var(--stone-600), var(--gold-700));
+}
+.ga-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  margin-top: -6.5px;
+  border-radius: 50%;
+  background: var(--gold-500);
+  border: 1px solid #6b5225;
+  box-shadow: 0 0 10px rgba(224, 184, 102, 0.55);
+}
+.ga-slider::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--gold-500);
+  border: 1px solid #6b5225;
+  box-shadow: 0 0 10px rgba(224, 184, 102, 0.55);
+}
+
+/* The grid: a track-name column plus one column per upgrade rank. */
+.ga-grid {
+  display: grid;
+  grid-template-columns: 148px repeat(var(--rank-count, 6), minmax(0, 1fr));
+  gap: 4px;
+}
+.ga-colhead {
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  color: var(--text-3);
+  text-align: center;
+  padding-bottom: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.ga-lab { display: flex; flex-direction: column; justify-content: center; padding: 8px 12px 8px 0; }
+.ga-lab strong {
+  font-family: var(--serif);
+  font-size: 16px;
+  font-weight: 400;
+  letter-spacing: 0.02em;
+  color: var(--track-colour, var(--text));
+}
+.ga-lab span { font-size: 11.5px; line-height: 1.4; color: var(--text-3); }
+
+.ga-cell {
+  border-radius: var(--radius);
+  padding: 9px 4px;
+  text-align: center;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  border: 1px solid transparent;
+  transition: background-color 0.12s ease, color 0.12s ease;
+}
+.ga-up { background: var(--gain-bg); color: var(--gain-text); border-color: var(--gain-border); }
+.ga-eq { background: var(--stone-750); color: var(--text-2); border-color: var(--stone-600); }
+.ga-dn { background: var(--loss-bg); color: var(--loss-text); border-color: var(--loss-border); }
+
+/* Mark the first rank on each track that actually beats the player's ilvl. */
+.ga-first { box-shadow: 0 0 0 1px var(--gold-500), 0 0 12px rgba(224, 184, 102, 0.28); }
+
+.ga-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 20px;
+  margin-top: 24px;
+  font-size: 13px;
+  color: var(--text-2);
+}
+.ga-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  vertical-align: 0;
+  margin-right: 7px;
+}
+
+.ga-note { font-size: 12.5px; line-height: 1.65; color: var(--text-3); margin: 18px 0 0; }
+
+@media (max-width: 620px) {
+  .character-form { grid-template-columns: 1fr; }
+  .equipment-grid { grid-template-columns: 1fr; }
+  .character-result-head { align-items: flex-start; flex-direction: column; }
+  .ga-grid { grid-template-columns: 104px repeat(var(--rank-count, 6), minmax(0, 1fr)); gap: 3px; }
+  .ga-cell { font-size: 12px; padding: 7px 2px; }
+  .ga-lab { padding-right: 8px; }
+  .ga-lab strong { font-size: 14px; }
+  .ga-lab span { font-size: 10.5px; }
+  .ga-readout output { font-size: 26px; }
+  .season-upgrade-row { grid-template-columns: minmax(68px, 0.75fr) minmax(92px, 1fr); }
+  .season-upgrade-cost { grid-column: 1 / -1; text-align: left; }
+}
