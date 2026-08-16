@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  API_ROUTES,
+  createApp,
   createCharacterService,
   clientAddress,
   findSeasonUpgrades,
@@ -8,6 +10,19 @@ import {
   normaliseRealm,
   resolveUpgrade
 } from '../server.mjs';
+
+function callApp(app, { method, url, address = '203.0.113.7' }) {
+  return new Promise((resolve) => {
+    const headers = {};
+    const chunks = [];
+    const response = {
+      setHeader(name, value) { headers[name] = value; },
+      writeHead(status, extra) { this.status = status; Object.assign(headers, extra || {}); },
+      end(body) { if (body) chunks.push(body); resolve({ status: this.status, headers, body: chunks.join('') }); }
+    };
+    app({ method, url, headers: { 'x-forwarded-for': `198.51.100.1, ${address}` }, socket: { remoteAddress: '172.18.0.2' } }, response);
+  });
+}
 
 test('normalises Blizzard realm and character path values', () => {
   assert.equal(normaliseRealm(" Dath'Remar "), 'dathremar');
@@ -545,5 +560,34 @@ test('keeps profile data available when the optional Mythic+ endpoint fails', as
     else process.env.BLIZZARD_CLIENT_ID = originalId;
     if (originalSecret === undefined) delete process.env.BLIZZARD_CLIENT_SECRET;
     else process.env.BLIZZARD_CLIENT_SECRET = originalSecret;
+  }
+});
+
+test('guards every API route against non-GET methods and rate limits', async () => {
+  // Iterates API_ROUTES rather than naming paths, so a route added to the
+  // table is covered here automatically and one added outside it is not
+  // reachable at all.
+  assert.ok(API_ROUTES.size >= 5, 'expected the known API routes to be registered');
+
+  const stub = new Proxy({}, { get: () => async () => ({ ok: true }) });
+
+  for (const pathname of API_ROUTES.keys()) {
+    const app = createApp({ characterService: stub });
+
+    const post = await callApp(app, { method: 'POST', url: pathname });
+    assert.equal(post.status, 405, `${pathname} must reject non-GET`);
+    assert.equal(JSON.parse(post.body).error, 'method_not_allowed');
+
+    const head = await callApp(app, { method: 'HEAD', url: pathname });
+    assert.equal(head.status, 405, `${pathname} must reject HEAD`);
+
+    let limited = null;
+    for (let attempt = 0; attempt < 62 && !limited; attempt += 1) {
+      const result = await callApp(app, { method: 'GET', url: pathname });
+      if (result.status === 429) limited = result;
+    }
+    assert.ok(limited, `${pathname} must be rate limited`);
+    assert.equal(JSON.parse(limited.body).error, 'rate_limited');
+    assert.equal(limited.headers['Retry-After'], '60');
   }
 });

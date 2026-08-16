@@ -640,6 +640,17 @@ async function serveStatic(requestPath, response, headOnly = false) {
   response.end(headOnly ? undefined : body);
 }
 
+// Every JSON endpoint lives here so the method check and the rate limiter are
+// applied in exactly one place. Adding a route to this table cannot leave it
+// unguarded; adding one outside the table is what a reviewer should reject.
+export const API_ROUTES = new Map([
+  ['/api/character', (service, url) => service.lookup(validateLookup(url))],
+  ['/api/talents', (service, url) => service.lookupTalents(validateLookup(url))],
+  ['/api/profile', (service, url) => service.lookupProfile(validateLookup(url))],
+  ['/api/achievements', (service, url) => service.lookupAchievements(validateLookup(url))],
+  ['/api/realms', (service, url) => service.listRealms(validateRegion(url))]
+]);
+
 export function createApp(options = {}) {
   const characterService = options.characterService || createCharacterService(options);
   const allowRequest = createRateLimiter();
@@ -656,39 +667,11 @@ export function createApp(options = {}) {
         response.end(request.method === 'HEAD' ? undefined : 'ok\n');
         return;
       }
-      if (url.pathname === '/api/character') {
+      const apiHandler = API_ROUTES.get(url.pathname);
+      if (apiHandler) {
         if (request.method !== 'GET') throw new HttpError(405, 'method_not_allowed', 'Method not allowed.');
         if (!allowRequest(clientAddress(request))) throw new HttpError(429, 'rate_limited', 'Too many requests.', '60');
-        const result = await characterService.lookup(validateLookup(url));
-        json(response, 200, result);
-        return;
-      }
-      if (url.pathname === '/api/talents') {
-        if (request.method !== 'GET') throw new HttpError(405, 'method_not_allowed', 'Method not allowed.');
-        if (!allowRequest(clientAddress(request))) throw new HttpError(429, 'rate_limited', 'Too many requests.', '60');
-        const result = await characterService.lookupTalents(validateLookup(url));
-        json(response, 200, result);
-        return;
-      }
-      if (url.pathname === '/api/profile') {
-        if (request.method !== 'GET') throw new HttpError(405, 'method_not_allowed', 'Method not allowed.');
-        if (!allowRequest(clientAddress(request))) throw new HttpError(429, 'rate_limited', 'Too many requests.', '60');
-        const result = await characterService.lookupProfile(validateLookup(url));
-        json(response, 200, result);
-        return;
-      }
-      if (url.pathname === '/api/achievements') {
-        if (request.method !== 'GET') throw new HttpError(405, 'method_not_allowed', 'Method not allowed.');
-        if (!allowRequest(clientAddress(request))) throw new HttpError(429, 'rate_limited', 'Too many requests.', '60');
-        const result = await characterService.lookupAchievements(validateLookup(url));
-        json(response, 200, result);
-        return;
-      }
-      if (url.pathname === '/api/realms') {
-        if (request.method !== 'GET') throw new HttpError(405, 'method_not_allowed', 'Method not allowed.');
-        if (!allowRequest(clientAddress(request))) throw new HttpError(429, 'rate_limited', 'Too many requests.', '60');
-        const result = await characterService.listRealms(validateRegion(url));
-        json(response, 200, result);
+        json(response, 200, await apiHandler(characterService, url));
         return;
       }
       await serveStatic(url.pathname, response, request.method === 'HEAD');
