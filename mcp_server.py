@@ -29,6 +29,16 @@ UPSTREAM_TIMEOUT_SECONDS = max(float(os.environ.get("WOW_MCP_UPSTREAM_TIMEOUT_SE
 MAX_REQUEST_BYTES = max(int(os.environ.get("WOW_MCP_MAX_REQUEST_BYTES", "1048576")), 1)
 AUDIT_LOCK = threading.Lock()
 REGIONS = ("us", "eu", "kr", "tw")
+SEASON_REWARD_CATEGORIES = (
+    "all",
+    "delves",
+    "mythic_plus",
+    "crests",
+    "great_vault",
+    "raid",
+    "currencies",
+    "recommended_activities",
+)
 
 
 CHARACTER_SUCCESS_SCHEMA: dict[str, Any] = {
@@ -307,6 +317,64 @@ ERROR_OUTPUT_SCHEMA: dict[str, Any] = {
     "additionalProperties": False,
 }
 
+# Curated seasonal rules, not Blizzard Profile API output. The envelope fields
+# are typed strictly so an agent can always read provenance/verifiedAt; the
+# static reward tables are typed as objects rather than leaf-by-leaf, because
+# over-specifying hand-curated data costs maintenance without adding safety.
+SEASON_REWARDS_SUCCESS_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "season": {"type": "string"},
+        "patch": {"type": "string"},
+        "verifiedAt": {"type": "string", "description": "Date the curated values were last checked against their sources."},
+        "provenance": {"const": "curated", "description": "Always 'curated'. This is never Blizzard Profile API output."},
+        "disclaimer": {"type": "string"},
+        "sources": {"type": "array", "items": {"type": "string"}},
+        "category": {"type": "string", "enum": list(SEASON_REWARD_CATEGORIES)},
+        "delves": {"type": "object"},
+        "mythicPlus": {"type": "object"},
+        "crests": {"type": "object"},
+        "greatVault": {"type": "object"},
+        "raid": {"type": "object"},
+        "aboveTrack": {"type": "object"},
+        "currencies": {"type": "object"},
+        "recommendedActivities": {
+            "type": "object",
+            "properties": {
+                "itemLevel": {"type": "integer"},
+                "goal": {"type": "string"},
+                "provenance": {"const": "curated"},
+                "advisory": {"const": True},
+                "note": {"type": "string"},
+                "suggestions": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "activity": {"type": "string"},
+                            "source": {"type": "string"},
+                            "rewardItemLevel": {"type": "integer"},
+                            "reason": {"type": "string", "description": "The rule that selected this activity."},
+                        },
+                        "required": ["activity", "source", "rewardItemLevel", "reason"],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            "required": ["itemLevel", "goal", "provenance", "advisory", "note", "suggestions"],
+            "additionalProperties": False,
+        },
+    },
+    "required": ["season", "patch", "verifiedAt", "provenance", "disclaimer", "sources", "category"],
+    "additionalProperties": False,
+}
+
+SEASON_REWARDS_OUTPUT_SCHEMA: dict[str, Any] = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "oneOf": [SEASON_REWARDS_SUCCESS_SCHEMA, ERROR_OUTPUT_SCHEMA],
+}
+
 CHARACTER_OUTPUT_SCHEMA: dict[str, Any] = {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "type": "object",
@@ -491,9 +559,48 @@ REALMS_TOOL = types.Tool(
     ),
 )
 
+SEASON_REWARDS_TOOL = types.Tool(
+    name="get_season_rewards",
+    title="Get Curated Season Reward Rules",
+    description=(
+        "Get curated Midnight Season 2 reward rules: Delve tiers, Mythic+ end-of-run and Great Vault "
+        "item levels, crest types and sources, Great Vault unlock thresholds, raid reward bands, and "
+        "seasonal currencies. Optionally derive deterministic activity suggestions for a supplied item "
+        "level. This is hand-curated community data labelled provenance='curated', NOT Blizzard Profile "
+        "API output, and it never reports a character's owned currency balances. Crest quantities per "
+        "run are unconfirmed in public sources and are returned as null."
+    ),
+    inputSchema={
+        "type": "object",
+        "properties": {
+            "category": {
+                "type": "string",
+                "enum": list(SEASON_REWARD_CATEGORIES),
+                "description": "Which section to return. Defaults to 'all'.",
+            },
+            "itemLevel": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1000,
+                "description": "Character item level. Required for 'recommended_activities'; optional elsewhere.",
+            },
+        },
+        "required": [],
+        "additionalProperties": False,
+    },
+    outputSchema=SEASON_REWARDS_OUTPUT_SCHEMA,
+    annotations=types.ToolAnnotations(
+        title="Get Curated Season Reward Rules",
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+)
+
 TOOLS = {
     tool.name: tool
-    for tool in (CHARACTER_TOOL, TALENTS_TOOL, PROFILE_TOOL, ACHIEVEMENTS_TOOL, REALMS_TOOL)
+    for tool in (CHARACTER_TOOL, TALENTS_TOOL, PROFILE_TOOL, ACHIEVEMENTS_TOOL, REALMS_TOOL, SEASON_REWARDS_TOOL)
 }
 
 
@@ -548,6 +655,25 @@ def _validate_region_arguments(arguments: dict[str, Any]) -> dict[str, Any]:
     return {"region": region}
 
 
+def _validate_season_arguments(arguments: dict[str, Any]) -> dict[str, Any]:
+    category = arguments.get("category", "all")
+    if not isinstance(category, str) or category.lower() not in SEASON_REWARD_CATEGORIES:
+        raise ValueError("category must be one of: " + ", ".join(SEASON_REWARD_CATEGORIES))
+    category = category.lower()
+    raw_item_level = arguments.get("itemLevel")
+    item_level: int | None = None
+    if raw_item_level is not None:
+        # bool is an int subclass; reject it explicitly.
+        if isinstance(raw_item_level, bool) or not isinstance(raw_item_level, int):
+            raise ValueError("itemLevel must be a whole number")
+        if not 1 <= raw_item_level <= 1000:
+            raise ValueError("itemLevel must be between 1 and 1000")
+        item_level = raw_item_level
+    if category == "recommended_activities" and item_level is None:
+        raise ValueError("recommended_activities requires an itemLevel")
+    return {"category": category, "itemLevel": item_level}
+
+
 def _upstream_query(
     path: str,
     query: dict[str, Any],
@@ -594,6 +720,11 @@ def _invoke_tool(
         }
     elif name == REALMS_TOOL.name:
         audit_arguments = {"region": arguments.get("region")}
+    elif name == SEASON_REWARDS_TOOL.name:
+        audit_arguments = {
+            "category": arguments.get("category", "all"),
+            "itemLevel": arguments.get("itemLevel"),
+        }
     else:
         audit_arguments = {}
     outcome = "error"
@@ -615,6 +746,12 @@ def _invoke_tool(
             validated = _validate_region_arguments(arguments)
             query = {"region": validated["region"]}
             path = "/api/realms"
+        elif name == SEASON_REWARDS_TOOL.name:
+            validated = _validate_season_arguments(arguments)
+            query = {"category": validated["category"]}
+            if validated["itemLevel"] is not None:
+                query["itemLevel"] = validated["itemLevel"]
+            path = "/api/season-rewards"
         else:
             error_code = "unknown_tool"
             return {"error": error_code, "message": f"Unknown tool: {name}"}, True
@@ -705,7 +842,10 @@ mcp_server = Server(
         "Read-only World of Warcraft character data from Blizzard. Use get_character_profile for compact identity, "
         "progression, and current Mythic+ context; get_character_equipment for equipped slots and Season 2 upgrade "
         "paths; get_character_talents for the current logged-out Armory build and import code; "
-        "get_character_achievements for totals and recent completions; and list_realms to discover realm slugs."
+        "get_character_achievements for totals and recent completions; list_realms to discover realm slugs; and "
+        "get_season_rewards for curated Season 2 reward rules and deterministic activity suggestions. "
+        "Character data comes from Blizzard; season reward rules are curated community data labelled "
+        "provenance='curated'."
     ),
     lifespan=_lifespan,
     on_list_tools=_list_tools,

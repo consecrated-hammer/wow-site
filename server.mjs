@@ -3,6 +3,7 @@ import { readFile, stat } from 'node:fs/promises';
 import { extname, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { SEASON } from './site/season-data.js';
+import { SEASON_REWARDS, recommendActivities } from './site/season-rewards.js';
 
 const SITE_ROOT = resolve(fileURLToPath(new URL('./site/', import.meta.url)));
 const PORT = positiveInteger(process.env.PORT, 80);
@@ -581,6 +582,62 @@ function validateRegion(url) {
   return region;
 }
 
+export const SEASON_REWARD_CATEGORIES = Object.freeze([
+  'all',
+  'delves',
+  'mythic_plus',
+  'crests',
+  'great_vault',
+  'raid',
+  'currencies',
+  'recommended_activities'
+]);
+
+function validateSeasonQuery(url) {
+  const category = String(url.searchParams.get('category') || 'all').toLowerCase();
+  if (!SEASON_REWARD_CATEGORIES.includes(category)) {
+    throw new HttpError(400, 'invalid_category', 'Choose a supported reward category.');
+  }
+  const rawItemLevel = url.searchParams.get('itemLevel');
+  let itemLevel = null;
+  if (rawItemLevel !== null && rawItemLevel !== '') {
+    itemLevel = Number(rawItemLevel);
+    if (!Number.isInteger(itemLevel) || itemLevel < 1 || itemLevel > 1000) {
+      throw new HttpError(400, 'invalid_item_level', 'Item level must be a whole number between 1 and 1000.');
+    }
+  }
+  if (category === 'recommended_activities' && itemLevel === null) {
+    throw new HttpError(400, 'item_level_required', 'Recommended activities need an item level.');
+  }
+  return { category, itemLevel };
+}
+
+// Curated data only. The envelope repeats provenance/season/patch/verifiedAt on
+// every response so a consumer can never mistake it for Blizzard API output.
+export function seasonRewards({ category, itemLevel }) {
+  const { season, patch, verifiedAt, provenance, disclaimer, sources } = SEASON_REWARDS;
+  const envelope = { season, patch, verifiedAt, provenance, disclaimer, sources, category };
+
+  const sections = {
+    delves: () => ({ delves: SEASON_REWARDS.delves }),
+    mythic_plus: () => ({ mythicPlus: SEASON_REWARDS.mythicPlus }),
+    crests: () => ({ crests: SEASON_REWARDS.crests }),
+    great_vault: () => ({ greatVault: SEASON_REWARDS.greatVault }),
+    raid: () => ({ raid: SEASON_REWARDS.raid, aboveTrack: SEASON_REWARDS.aboveTrack }),
+    currencies: () => ({ currencies: SEASON_REWARDS.currencies }),
+    recommended_activities: () => ({ recommendedActivities: recommendActivities(itemLevel) })
+  };
+
+  if (category === 'all') {
+    const all = Object.assign({}, ...Object.keys(sections)
+      .filter((key) => key !== 'recommended_activities')
+      .map((key) => sections[key]()));
+    if (itemLevel !== null) all.recommendedActivities = recommendActivities(itemLevel);
+    return { ...envelope, ...all };
+  }
+  return { ...envelope, ...sections[category]() };
+}
+
 export function clientAddress(request) {
   const forwarded = String(request.headers['x-forwarded-for'] || '')
     .split(',')
@@ -648,7 +705,8 @@ export const API_ROUTES = new Map([
   ['/api/talents', (service, url) => service.lookupTalents(validateLookup(url))],
   ['/api/profile', (service, url) => service.lookupProfile(validateLookup(url))],
   ['/api/achievements', (service, url) => service.lookupAchievements(validateLookup(url))],
-  ['/api/realms', (service, url) => service.listRealms(validateRegion(url))]
+  ['/api/realms', (service, url) => service.listRealms(validateRegion(url))],
+  ['/api/season-rewards', (_service, url) => seasonRewards(validateSeasonQuery(url))]
 ]);
 
 export function createApp(options = {}) {

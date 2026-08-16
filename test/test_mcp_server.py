@@ -132,12 +132,21 @@ class WowMcpTests(unittest.TestCase):
             validate(result, server.REALMS_OUTPUT_SCHEMA)
 
     def test_region_schema_accepts_uppercase_agent_input(self) -> None:
+        # Driven by each schema's own shape rather than a tool-name exception,
+        # so a tool that takes no region (get_season_rewards) is skipped and a
+        # new region-taking tool is covered automatically.
+        checked = 0
         for tool in server.TOOLS.values():
-            validate({"region": "US", **(
-                {"realm": "Dath'Remar", "character": "Bluehoof"}
-                if tool.name != "list_realms"
-                else {}
-            )}, tool.input_schema)
+            properties = tool.input_schema["properties"]
+            if "region" not in properties:
+                continue
+            payload = {"region": "US"}
+            if "character" in properties:
+                payload |= {"realm": "Dath'Remar", "character": "Bluehoof"}
+            with self.subTest(tool=tool.name):
+                validate(payload, tool.input_schema)
+            checked += 1
+        self.assertGreaterEqual(checked, 5)
 
     def test_new_character_tools_route_to_cached_internal_endpoints(self) -> None:
         fixtures = {
@@ -218,6 +227,69 @@ class WowMcpTests(unittest.TestCase):
             },
         )
 
+    def test_season_rewards_tool_is_declared_read_only_with_strict_schema(self) -> None:
+        tool = server.TOOLS["get_season_rewards"]
+        annotations = tool.annotations.model_dump(by_alias=True, exclude_none=True)
+        self.assertTrue(annotations["readOnlyHint"])
+        self.assertFalse(annotations["destructiveHint"])
+        self.assertTrue(annotations["idempotentHint"])
+        self.assertFalse(tool.input_schema["additionalProperties"])
+        self.assertEqual(set(tool.input_schema["properties"]), {"category", "itemLevel"})
+        success = tool.output_schema["oneOf"][0]
+        # Provenance is pinned so an agent can never read curated seasonal
+        # rules as Blizzard character data.
+        self.assertEqual(success["properties"]["provenance"]["const"], "curated")
+        self.assertIn("provenance", success["required"])
+        self.assertIn("verifiedAt", success["required"])
+        Draft202012Validator.check_schema(tool.output_schema)
+
+    def test_season_rewards_arguments_are_validated(self) -> None:
+        self.assertEqual(
+            server._validate_season_arguments({}), {"category": "all", "itemLevel": None}
+        )
+        self.assertEqual(
+            server._validate_season_arguments({"category": "DELVES"})["category"], "delves"
+        )
+        for bad in (
+            {"category": "loot_pinata"},
+            {"itemLevel": 289.5},
+            {"itemLevel": True},
+            {"itemLevel": 0},
+            {"category": "recommended_activities"},
+        ):
+            with self.subTest(bad=bad):
+                with self.assertRaises(ValueError):
+                    server._validate_season_arguments(bad)
+
+    def test_season_rewards_routes_through_the_shared_internal_endpoint(self) -> None:
+        captured: dict = {}
+
+        def fake_upstream(path, query, caller_address):
+            captured["path"] = path
+            captured["query"] = query
+            return {
+                "season": "Midnight Season 2",
+                "patch": "12.1",
+                "verifiedAt": "2026-08-17",
+                "provenance": "curated",
+                "disclaimer": "Curated community data.",
+                "sources": ["https://example.invalid"],
+                "category": "mythic_plus",
+            }, 200, None
+
+        with patch.object(server, "_upstream_query", fake_upstream):
+            result, is_error = server._invoke_tool(
+                "get_season_rewards", {"category": "mythic_plus", "itemLevel": 289}, {}
+            )
+
+        self.assertFalse(is_error)
+        # Must reuse the site API so cache, limiter and audit stay single-path.
+        self.assertEqual(captured["path"], "/api/season-rewards")
+        self.assertEqual(captured["query"], {"category": "mythic_plus", "itemLevel": 289})
+        self.assertEqual(result["provenance"], "curated")
+        validate(result, server.TOOLS["get_season_rewards"].output_schema)
+
 
 if __name__ == "__main__":
     unittest.main()
+

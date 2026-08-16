@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   API_ROUTES,
+  SEASON_REWARD_CATEGORIES,
+  seasonRewards,
   createApp,
   createCharacterService,
   clientAddress,
@@ -590,4 +592,64 @@ test('guards every API route against non-GET methods and rate limits', async () 
     assert.equal(JSON.parse(limited.body).error, 'rate_limited');
     assert.equal(limited.headers['Retry-After'], '60');
   }
+});
+
+test('labels every season reward response as curated, never Blizzard output', () => {
+  for (const category of SEASON_REWARD_CATEGORIES) {
+    const itemLevel = category === 'recommended_activities' ? 289 : null;
+    const result = seasonRewards({ category, itemLevel });
+    assert.equal(result.provenance, 'curated', `${category} must declare curated provenance`);
+    assert.equal(result.season, 'Midnight Season 2');
+    assert.equal(result.patch, '12.1');
+    assert.ok(result.verifiedAt, `${category} must carry verifiedAt`);
+    assert.ok(Array.isArray(result.sources) && result.sources.length > 0);
+    assert.equal(result.category, category);
+  }
+});
+
+test('reports unconfirmed crest quantities as null rather than guessing', () => {
+  const { mythicPlus } = seasonRewards({ category: 'mythic_plus', itemLevel: null });
+  assert.equal(mythicPlus.keys.length, 10);
+  for (const entry of mythicPlus.keys) {
+    assert.equal(entry.crestQuantity.amount, null, `${entry.key} must not invent a crest quantity`);
+    assert.equal(entry.crestQuantity.confirmed, false);
+    assert.ok(entry.crestType, `${entry.key} must still name its crest type`);
+  }
+});
+
+test('derives deterministic activity advice with the rule that selected it', () => {
+  const { recommendedActivities } = seasonRewards({ category: 'recommended_activities', itemLevel: 289 });
+  assert.equal(recommendedActivities.advisory, true);
+  assert.equal(recommendedActivities.provenance, 'curated');
+  assert.ok(recommendedActivities.suggestions.length > 0);
+  for (const suggestion of recommendedActivities.suggestions) {
+    assert.ok(suggestion.rewardItemLevel > 289, 'must only suggest activities that beat the supplied level');
+    assert.match(suggestion.reason, /289/, 'each suggestion must explain itself against the supplied level');
+  }
+  // Regression for the review finding: a well-geared character must still be
+  // offered later raid bosses, not a false "nothing improves your gear".
+  const geared = seasonRewards({ category: 'recommended_activities', itemLevel: 330 });
+  const raid = geared.recommendedActivities.suggestions.find((entry) => entry.source === 'raid');
+  assert.ok(raid, 'ilvl 330 must still be offered the 344 raid band');
+  assert.equal(raid.rewardItemLevel, 344);
+  assert.match(raid.reason, /bosses 7-8/);
+
+  // Only past the top of every listed reward is an empty answer correct.
+  const topped = seasonRewards({ category: 'recommended_activities', itemLevel: 999 });
+  assert.deepEqual(topped.recommendedActivities.suggestions, []);
+});
+
+test('rejects unknown categories and item levels at the query boundary', async () => {
+  const app = createApp({ characterService: new Proxy({}, { get: () => async () => ({}) }) });
+  const bad = await callApp(app, { method: 'GET', url: '/api/season-rewards?category=loot_pinata' });
+  assert.equal(bad.status, 400);
+  assert.equal(JSON.parse(bad.body).error, 'invalid_category');
+
+  const missing = await callApp(app, { method: 'GET', url: '/api/season-rewards?category=recommended_activities' });
+  assert.equal(missing.status, 400);
+  assert.equal(JSON.parse(missing.body).error, 'item_level_required');
+
+  const fractional = await callApp(app, { method: 'GET', url: '/api/season-rewards?itemLevel=289.5' });
+  assert.equal(fractional.status, 400);
+  assert.equal(JSON.parse(fractional.body).error, 'invalid_item_level');
 });
