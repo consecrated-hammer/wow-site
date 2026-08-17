@@ -143,6 +143,12 @@ class WowMcpTests(unittest.TestCase):
             payload = {"region": "US"}
             if "character" in properties:
                 payload |= {"realm": "Dath'Remar", "character": "Bluehoof"}
+            # Satisfy any other required field generically, so a new tool with
+            # its own required inputs does not break this check.
+            for required in tool.input_schema.get("required", []):
+                if required not in payload:
+                    payload[required] = "season-mn-2" if required == "season" else "placeholder"
+
             with self.subTest(tool=tool.name):
                 validate(payload, tool.input_schema)
             checked += 1

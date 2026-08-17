@@ -7,6 +7,8 @@ import { resolveSeasonModule, seasonDataUnavailable } from './site/seasons/index
 import { createReferenceData } from './lib/reference-data.mjs';
 import { createGuidanceService } from './lib/guidance.mjs';
 import { PROVENANCE } from './lib/providers.mjs';
+import { greatVaultProgress, raidProgress } from './lib/vault.mjs';
+import { createMetaBuilds } from './lib/meta-builds.mjs';
 
 const SITE_ROOT = resolve(fileURLToPath(new URL('./site/', import.meta.url)));
 const PORT = positiveInteger(process.env.PORT, 80);
@@ -510,6 +512,54 @@ export function createCharacterService(options = {}) {
     return request;
   }
 
+  async function fetchRaidEncounters(region, realm, character) {
+    return fetchCharacterResource(region, realm, character, 'encounters/raids');
+  }
+
+  async function fetchVault(region, realm, character) {
+    const [keystoneProfile, raidEncounters] = await Promise.all([
+      fetchCharacterResource(region, realm, character, 'mythic-keystone-profile'),
+      fetchRaidEncounters(region, realm, character)
+    ]);
+    // The weekly window comes from the keystone period, which is what makes
+    // "killed this reset" answerable at all.
+    let period = null;
+    const periodId = keystoneProfile?.current_period?.period?.id;
+    if (periodId) {
+      try {
+        const accessToken = await getToken();
+        const url = new URL(`https://${region}.api.blizzard.com/data/wow/mythic-keystone/period/${periodId}`);
+        url.searchParams.set('namespace', `dynamic-${region}`);
+        period = await fetchJson(url, { headers: { authorization: `Bearer ${accessToken}` } });
+      } catch {
+        period = { id: periodId };
+      }
+    }
+    return { keystoneProfile, raidEncounters, period };
+  }
+
+  async function lookupVault({ region, realm, character, forceRefresh = false }, seasonRewards) {
+    return lookupCached('vault', { region, realm, character, forceRefresh }, async (...args) => {
+      const { keystoneProfile, raidEncounters, period } = await fetchVault(...args);
+      return {
+        source: 'Blizzard',
+        character: characterIdentity(raidEncounters, region, realm, character),
+        ...greatVaultProgress({ period, keystoneProfile, raidEncounters, seasonRewards })
+      };
+    });
+  }
+
+  async function lookupRaidProgress({ region, realm, character, forceRefresh = false, currentOnly = true }) {
+    return lookupCached('raids', { region, realm, character, forceRefresh }, async (...args) => {
+      const raidEncounters = await fetchRaidEncounters(...args);
+      return {
+        source: 'Blizzard',
+        character: characterIdentity(raidEncounters, region, realm, character),
+        ...raidProgress({ raidEncounters, currentOnly })
+      };
+    });
+  }
+
   async function lookup({ region, realm, character, forceRefresh = false }) {
     return lookupCached('equipment', { region, realm, character, forceRefresh }, fetchCharacter);
   }
@@ -569,7 +619,7 @@ export function createCharacterService(options = {}) {
     return lookupCached('achievements', query, fetchAchievements);
   }
 
-  return { lookup, lookupTalents, lookupProfile, lookupAchievements, listRealms, currentSeasonId };
+  return { lookup, lookupTalents, lookupProfile, lookupAchievements, listRealms, currentSeasonId, lookupVault, lookupRaidProgress };
 }
 
 function decorate(data, fetchedAt, status, refreshCooldownMs, warning = null, refreshBaseAt = fetchedAt) {
@@ -691,6 +741,34 @@ function validateSpecQuery(url) {
     if (!Number.isInteger(specId) || specId < 1) throw new HttpError(400, 'invalid_spec_id', 'specId must be a positive whole number.');
   }
   return { className, spec, specId };
+}
+
+const SEASON_SLUG_PATTERN = /^[a-z0-9-]{3,40}$/;
+
+function validateMetaQuery(url) {
+  const season = String(url.searchParams.get('season') || '').trim().toLowerCase();
+  if (!SEASON_SLUG_PATTERN.test(season)) {
+    throw new HttpError(400, 'invalid_season_slug', "Provide a Raider.IO season slug, e.g. 'season-mn-2'.");
+  }
+  const region = String(url.searchParams.get('region') || 'world').trim().toLowerCase();
+  if (!/^(world|us|eu|kr|tw)$/.test(region)) throw new HttpError(400, 'invalid_region', 'Choose world, us, eu, kr or tw.');
+  const rawPages = url.searchParams.get('pages');
+  let pages = 3;
+  if (rawPages) {
+    pages = Number(rawPages);
+    if (!Number.isInteger(pages) || pages < 1 || pages > 5) {
+      throw new HttpError(400, 'invalid_pages', 'pages must be between 1 and 5.');
+    }
+  }
+  const spec = url.searchParams.get('spec');
+  if (spec !== null && !/^[a-z ]{2,40}$/i.test(spec)) throw new HttpError(400, 'invalid_spec', 'Enter a valid specialization filter.');
+  const rawSpecId = url.searchParams.get('specId');
+  let specId = null;
+  if (rawSpecId) {
+    specId = Number(rawSpecId);
+    if (!Number.isInteger(specId) || specId < 1) throw new HttpError(400, 'invalid_spec_id', 'specId must be a positive whole number.');
+  }
+  return { season, region, pages, spec: spec ? spec.toLowerCase() : null, specId };
 }
 
 // Curated data only. The envelope repeats provenance/season/patch/verifiedAt on
@@ -817,6 +895,18 @@ export const API_ROUTES = new Map([
       spec: { class: className, specialization: spec }
     };
   }],
+  ['/api/great-vault', async (service, url) => {
+    const seasonId = await service.currentSeasonId();
+    const seasonModule = resolveSeasonModule(seasonId);
+    // Thresholds come from curated season data; without them the counts have
+    // nothing to be measured against, so say so rather than invent thresholds.
+    return service.lookupVault(validateLookup(url), seasonModule?.rewards ?? null);
+  }],
+  ['/api/raid-progress', async (service, url) => service.lookupRaidProgress({
+    ...validateLookup(url),
+    currentOnly: url.searchParams.get('all') !== '1'
+  })],
+  ['/api/meta-builds', async (service, url) => service.metaBuilds(validateMetaQuery(url))],
   ['/api/season-rewards', async (service, url) => {
     const query = validateSeasonQuery(url);
     // Resolve the live season unless the caller pinned one explicitly.
@@ -832,6 +922,13 @@ export function createApp(options = {}) {
   // responsibility, and so tests can supply either half independently.
   if (!characterService.guidance) {
     characterService.guidance = options.guidanceService || createGuidanceService({ referenceData, ...options });
+  }
+  if (!characterService.metaBuilds) {
+    const meta = options.metaBuildsService || createMetaBuilds({ referenceData, ...options });
+    characterService.metaBuilds = async ({ specId, ...query }) => {
+      const result = await meta.metaBuilds(query);
+      return specId ? meta.decodeBuilds(result, specId) : result;
+    };
   }
   const allowRequest = createRateLimiter();
 

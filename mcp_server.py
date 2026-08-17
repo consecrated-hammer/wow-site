@@ -325,6 +325,74 @@ ERROR_OUTPUT_SCHEMA: dict[str, Any] = {
 # Community guidance, never Blizzard output. `available` is part of the success
 # contract: missing guidance is a normal answer, not an error, so an agent gets
 # a schema-valid response instead of a tool failure.
+VAULT_SUCCESS_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "source": {"type": "string"},
+        "character": {"type": ["object", "null"]},
+        "provenance": {"const": "blizzard"},
+        "derived": {"const": True},
+        "note": {"type": "string"},
+        "period": {"type": "object"},
+        "slots": {"type": "array"},
+        "cache": CACHE_SCHEMA,
+        "fetchedAt": {"type": "string"},
+    },
+    "required": ["provenance", "derived", "slots"],
+    "additionalProperties": True,
+}
+
+VAULT_OUTPUT_SCHEMA: dict[str, Any] = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "oneOf": [VAULT_SUCCESS_SCHEMA, ERROR_OUTPUT_SCHEMA],
+}
+
+RAID_PROGRESS_SUCCESS_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "source": {"type": "string"},
+        "character": {"type": ["object", "null"]},
+        "provenance": {"const": "blizzard"},
+        "expansions": {"type": "array"},
+        "cache": CACHE_SCHEMA,
+        "fetchedAt": {"type": "string"},
+    },
+    "required": ["provenance", "expansions"],
+    "additionalProperties": True,
+}
+
+RAID_PROGRESS_OUTPUT_SCHEMA: dict[str, Any] = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "oneOf": [RAID_PROGRESS_SUCCESS_SCHEMA, ERROR_OUTPUT_SCHEMA],
+}
+
+META_BUILDS_SUCCESS_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "provenance": {"const": "community"},
+        "source": {"const": "raiderio"},
+        "attribution": {"type": "object", "description": "Required by Raider.IO's terms; surface it."},
+        "season": {"type": "string"},
+        "region": {"type": "string"},
+        "runsAnalysed": {"type": "integer"},
+        "fetchedAt": {"type": "string"},
+        "comps": {"type": "array"},
+        "specs": {"type": "array"},
+        "builds": {"type": "array"},
+        "decodeWarning": {"type": ["string", "null"]},
+    },
+    "required": ["provenance", "source", "attribution", "comps", "specs", "builds"],
+    "additionalProperties": True,
+}
+
+META_BUILDS_OUTPUT_SCHEMA: dict[str, Any] = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "oneOf": [META_BUILDS_SUCCESS_SCHEMA, ERROR_OUTPUT_SCHEMA],
+}
+
 GUIDANCE_SUCCESS_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -725,9 +793,93 @@ GEAR_AUDIT_TOOL = types.Tool(
     ),
 )
 
+VAULT_TOOL = types.Tool(
+    name="get_great_vault_progress",
+    title="Get Great Vault Progress",
+    description=(
+        "Derive this week's Great Vault slot progress for a character. Blizzard publishes no Vault "
+        "state, so this is INFERRED and each slot reports its own coverage: raid is 'complete' "
+        "(derived from per-boss kill timestamps inside the current weekly period), dungeon is 'floor' "
+        "(only Mythic+ runs are visible; Heroic, Mythic and Timewalking dungeons also count and are "
+        "not exposed), and world is 'unavailable' (Delves and Prey hunts are not exposed at all). "
+        "Read each slot's coverage and limitation before presenting a count as fact."
+    ),
+    inputSchema={
+        "type": "object",
+        "properties": {
+            "region": {"type": "string", "enum": [*REGIONS, *(region.upper() for region in REGIONS)]},
+            "realm": {"type": "string", "description": "Realm slug, e.g. 'dathremar'."},
+            "character": {"type": "string", "description": "Character name."},
+        },
+        "required": ["region", "realm", "character"],
+        "additionalProperties": False,
+    },
+    outputSchema=VAULT_OUTPUT_SCHEMA,
+    annotations=types.ToolAnnotations(
+        title="Get Great Vault Progress",
+        readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True,
+    ),
+)
+
+RAID_PROGRESS_TOOL = types.Tool(
+    name="get_raid_progress",
+    title="Get Raid Progress",
+    description=(
+        "Get a character's raid progress from Blizzard: which bosses have been defeated in each "
+        "current-season raid at each difficulty, how many kills, and when each was last killed. "
+        "Authoritative Blizzard character data. Lifetime progress, not weekly; use "
+        "get_great_vault_progress for what counts toward this week's Vault."
+    ),
+    inputSchema={
+        "type": "object",
+        "properties": {
+            "region": {"type": "string", "enum": [*REGIONS, *(region.upper() for region in REGIONS)]},
+            "realm": {"type": "string", "description": "Realm slug, e.g. 'dathremar'."},
+            "character": {"type": "string", "description": "Character name."},
+        },
+        "required": ["region", "realm", "character"],
+        "additionalProperties": False,
+    },
+    outputSchema=RAID_PROGRESS_OUTPUT_SCHEMA,
+    annotations=types.ToolAnnotations(
+        title="Get Raid Progress",
+        readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True,
+    ),
+)
+
+META_BUILDS_TOOL = types.Tool(
+    name="get_meta_builds",
+    title="Get Observed Top Mythic+ Comps and Builds",
+    description=(
+        "Get the team compositions and talent builds that top Mythic+ groups actually ran, aggregated "
+        "from Raider.IO's leaderboard. This is OBSERVED data ('what top teams ran'), which is a "
+        "different claim from get_class_guidance ('what a guide recommends') - do not merge the two. "
+        "Returns composition frequencies, spec popularity, and the most common talent import strings "
+        "per spec, decoded into named talents when specId is supplied. Attribution to Raider.IO is "
+        "included and must be surfaced. A season with no runs yet returns empty lists, not an error."
+    ),
+    inputSchema={
+        "type": "object",
+        "properties": {
+            "season": {"type": "string", "description": "Raider.IO season slug, e.g. 'season-mn-2'."},
+            "region": {"type": "string", "enum": ["world", "us", "eu", "kr", "tw", "WORLD", "US", "EU", "KR", "TW"], "description": "Defaults to world. Case-insensitive, like the other tools."},
+            "pages": {"type": "integer", "minimum": 1, "maximum": 5, "description": "Pages of 20 runs to aggregate. Defaults to 3."},
+            "spec": {"type": "string", "description": "Filter to a spec, e.g. 'holy paladin'."},
+            "specId": {"type": "integer", "minimum": 1, "description": "Blizzard spec id; supplying it decodes the builds."},
+        },
+        "required": ["season"],
+        "additionalProperties": False,
+    },
+    outputSchema=META_BUILDS_OUTPUT_SCHEMA,
+    annotations=types.ToolAnnotations(
+        title="Get Observed Top Mythic+ Comps and Builds",
+        readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=True,
+    ),
+)
+
 TOOLS = {
     tool.name: tool
-    for tool in (CHARACTER_TOOL, TALENTS_TOOL, PROFILE_TOOL, ACHIEVEMENTS_TOOL, REALMS_TOOL, SEASON_REWARDS_TOOL, GUIDANCE_TOOL, GEAR_AUDIT_TOOL)
+    for tool in (CHARACTER_TOOL, TALENTS_TOOL, PROFILE_TOOL, ACHIEVEMENTS_TOOL, REALMS_TOOL, SEASON_REWARDS_TOOL, GUIDANCE_TOOL, GEAR_AUDIT_TOOL, VAULT_TOOL, RAID_PROGRESS_TOOL, META_BUILDS_TOOL)
 }
 
 
@@ -818,6 +970,31 @@ def _validate_guidance_arguments(arguments: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _validate_meta_arguments(arguments: dict[str, Any]) -> dict[str, Any]:
+    season = arguments.get("season")
+    if not isinstance(season, str) or not re.fullmatch(r"[a-z0-9-]{3,40}", season.strip().lower()):
+        raise ValueError("season must be a Raider.IO season slug, e.g. season-mn-2")
+    region = arguments.get("region", "world")
+    if not isinstance(region, str) or region.lower() not in {"world", "us", "eu", "kr", "tw"}:
+        raise ValueError("region must be world, us, eu, kr or tw")
+    pages = arguments.get("pages", 3)
+    if isinstance(pages, bool) or not isinstance(pages, int) or not 1 <= pages <= 5:
+        raise ValueError("pages must be a whole number between 1 and 5")
+    spec = arguments.get("spec")
+    if spec is not None and (not isinstance(spec, str) or not re.fullmatch(r"[A-Za-z ]{2,40}", spec.strip())):
+        raise ValueError("spec must be a specialization name")
+    spec_id = arguments.get("specId")
+    if spec_id is not None and (isinstance(spec_id, bool) or not isinstance(spec_id, int) or spec_id < 1):
+        raise ValueError("specId must be a positive whole number")
+    return {
+        "season": season.strip().lower(),
+        "region": region.lower(),
+        "pages": pages,
+        "spec": spec.strip().lower() if isinstance(spec, str) else None,
+        "specId": spec_id,
+    }
+
+
 def _upstream_query(
     path: str,
     query: dict[str, Any],
@@ -852,6 +1029,8 @@ def _invoke_tool(
     character_tools = {
         CHARACTER_TOOL.name: "/api/character",
         GEAR_AUDIT_TOOL.name: "/api/gear-audit",
+        VAULT_TOOL.name: "/api/great-vault",
+        RAID_PROGRESS_TOOL.name: "/api/raid-progress",
         TALENTS_TOOL.name: "/api/talents",
         PROFILE_TOOL.name: "/api/profile",
         ACHIEVEMENTS_TOOL.name: "/api/achievements",
@@ -865,6 +1044,12 @@ def _invoke_tool(
         }
     elif name == REALMS_TOOL.name:
         audit_arguments = {"region": arguments.get("region")}
+    elif name == META_BUILDS_TOOL.name:
+        audit_arguments = {
+            "season": arguments.get("season"),
+            "region": arguments.get("region"),
+            "spec": arguments.get("spec"),
+        }
     elif name == GUIDANCE_TOOL.name:
         audit_arguments = {
             "className": arguments.get("className"),
@@ -897,6 +1082,14 @@ def _invoke_tool(
             validated = _validate_region_arguments(arguments)
             query = {"region": validated["region"]}
             path = "/api/realms"
+        elif name == META_BUILDS_TOOL.name:
+            validated = _validate_meta_arguments(arguments)
+            query = {"season": validated["season"], "region": validated["region"], "pages": validated["pages"]}
+            if validated["spec"]:
+                query["spec"] = validated["spec"]
+            if validated["specId"] is not None:
+                query["specId"] = validated["specId"]
+            path = "/api/meta-builds"
         elif name == GUIDANCE_TOOL.name:
             validated = _validate_guidance_arguments(arguments)
             query = {"class": validated["className"], "spec": validated["spec"]}
@@ -1002,7 +1195,9 @@ mcp_server = Server(
         "get_character_achievements for totals and recent completions; list_realms to discover realm slugs; and "
         "get_season_rewards for curated season reward rules and deterministic activity suggestions; "
         "get_class_guidance for recommended stats, talent builds, trinkets and best-in-slot lists; and "
-        "get_gear_audit to cross-reference equipped items against those recommendations. "
+        "get_gear_audit to cross-reference equipped items against those recommendations; "
+        "get_great_vault_progress for this week's derived Vault slots; get_raid_progress for boss "
+        "kills; and get_meta_builds for what top Mythic+ teams actually ran. "
         "Character data comes from Blizzard; season reward rules are curated community data labelled "
         "provenance='curated'."
     ),
