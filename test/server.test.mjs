@@ -803,7 +803,17 @@ test('applies a different refresh rule per dataset and survives outages', async 
   let etagSent = null;
   let upstreamStatus = 200;
 
-  const payload = [{ specId: 65, className: 'Paladin', specName: 'Holy', fullNodeOrder: [1, 2, 3] }];
+  // A contract-valid payload: 40 specs shaped like the real upstream file.
+  const node = (id) => ({ id, name: `Node ${id}`, maxRanks: 1, entries: [{ id, name: `Talent ${id}`, spellId: 1000 + id }] });
+  const payload = Array.from({ length: 40 }, (unused, index) => ({
+    specId: 65 + index,
+    className: 'Paladin',
+    specName: `Spec${index}`,
+    fullNodeOrder: [1, 2, 3],
+    classNodes: [node(1)],
+    specNodes: [node(2)],
+    heroNodes: [node(3)]
+  }));
   const fetchImpl = async (url, init = {}) => {
     const target = String(url);
     if (target.includes('wago.tools')) {
@@ -945,4 +955,103 @@ test('audits equipment against guidance and labels each side', async () => {
     () => auditGear({ equipment: { ...equipment, provenance: 'community' }, guidance }),
     /requires Blizzard-sourced equipment/
   );
+});
+
+test('rejects upstream data that breaks its contract without losing good data', async () => {
+  const { mkdtemp, rm } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { createReferenceData } = await import('../lib/reference-data.mjs');
+
+  const cacheDir = await mkdtemp(join(tmpdir(), 'wow-contract-'));
+  let clock = Date.UTC(2026, 7, 17, 0, 0, 0);
+  let serveBroken = false;
+
+  const node = (id) => ({ id, name: `Node ${id}`, maxRanks: 1, entries: [{ id, name: `Talent ${id}`, spellId: 1000 + id }] });
+  const good = Array.from({ length: 40 }, (unused, index) => ({
+    specId: 65 + index, className: 'Paladin', specName: `Spec${index}`,
+    fullNodeOrder: [1, 2, 3], classNodes: [node(1)], specNodes: [node(2)], heroNodes: [node(3)]
+  }));
+  // The realistic break: upstream renames the field the decoder depends on.
+  const broken = good.map(({ fullNodeOrder, ...rest }) => ({ ...rest, nodeOrder: fullNodeOrder }));
+
+  const fetchImpl = async (url) => {
+    if (String(url).includes('wago.tools')) return { ok: true, json: async () => ({ wow: [{ version: '12.1.0.1' }] }) };
+    return {
+      status: 200, ok: true,
+      headers: { get: () => null },
+      json: async () => (serveBroken ? broken : good)
+    };
+  };
+
+  try {
+    const reference = createReferenceData({ cacheDir, fetchImpl, now: () => clock });
+    assert.equal((await reference.refreshTalentTrees()).outcome, 'updated');
+
+    // Upstream changes its model. The refresh must not overwrite good data.
+    serveBroken = true;
+    clock += 25 * 60 * 60 * 1000;
+    const rejected = await reference.refreshTalentTrees({ force: true });
+    assert.equal(rejected.outcome, 'rejected');
+    assert.match(rejected.reason, /keeping the last known-good copy/);
+    const renamed = rejected.contractViolation.violations.find((v) => v.path === 'fullNodeOrder');
+    assert.ok(renamed, 'the violation names the field that changed');
+    assert.match(renamed.usedFor, /silently corrupts every decode/);
+
+    // The critical property: consumers still get working data.
+    const { data, meta } = await reference.get('talent-trees');
+    assert.equal(data.length, 40, 'last known-good copy is still served');
+    assert.ok(data[0].fullNodeOrder, 'and it still has the field the decoder needs');
+    assert.ok(meta.contractViolation, 'while the violation is recorded for a human');
+
+    // And the admin status surfaces it rather than hiding it.
+    const row = (await reference.status()).datasets.find((entry) => entry.id === 'talent-trees');
+    assert.equal(row.contractOk, false);
+    assert.equal(row.present, true, 'still present and usable');
+  } finally {
+    await rm(cacheDir, { recursive: true, force: true });
+  }
+});
+
+test('a contract violation degrades a snapshot without throwing', async () => {
+  const { mkdtemp, rm } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { createReferenceData } = await import('../lib/reference-data.mjs');
+
+  const cacheDir = await mkdtemp(join(tmpdir(), 'wow-snap-'));
+  try {
+    const reference = createReferenceData({ cacheDir, fetchImpl: async () => ({ ok: false }), now: () => 0 });
+    // A restructured ClassCodex import must return a result, never throw,
+    // because the MCP tool calling it has to keep answering.
+    const result = await reference.putSnapshot('classcodex', { specs: { 'PALADIN/holy': {} } });
+    assert.equal(result.outcome, 'unavailable');
+    assert.ok(result.contractViolation.violations.length > 0);
+    assert.match(result.reason, /previous copy is untouched/);
+  } finally {
+    await rm(cacheDir, { recursive: true, force: true });
+  }
+});
+
+test('a broken upstream contract never breaks the MCP surface', async () => {
+  // The MCP tools forward to /api/*. If a reference dataset is rejected, those
+  // endpoints must still answer with schema-valid output, because a tool that
+  // throws takes the whole tool listing down for an agent mid-conversation.
+  const stub = new Proxy({}, { get: () => async () => ({ ok: true }) });
+  const app = createApp({ characterService: { ...stub, currentSeasonId: async () => 18 } });
+
+  // Season data is independent of any upstream reference dataset.
+  const season = await callApp(app, { method: 'GET', url: '/api/season-rewards?category=crests' });
+  assert.equal(season.status, 200);
+  assert.equal(JSON.parse(season.body).provenance, 'curated');
+
+  // And when the season itself cannot be resolved, the endpoint still returns
+  // 200 with a structured explanation rather than an error status, so the MCP
+  // tool's success schema still validates.
+  const appWithoutSeason = createApp({ characterService: { ...stub, currentSeasonId: async () => null } });
+  const unresolved = await callApp(appWithoutSeason, { method: 'GET', url: '/api/season-rewards' });
+  assert.equal(unresolved.status, 200);
+  const body = JSON.parse(unresolved.body);
+  assert.equal(body.seasonDataUnavailable, true);
+  assert.ok(body.message, 'the agent is told why, in the success payload');
 });
