@@ -246,7 +246,12 @@ class WowMcpTests(unittest.TestCase):
         # rules as Blizzard character data.
         self.assertEqual(success["properties"]["provenance"]["const"], "curated")
         self.assertIn("provenance", success["required"])
-        self.assertIn("verifiedAt", success["required"])
+        # verifiedAt is declared but NOT required, because it is legitimately
+        # absent when the season has rolled over and no curated data exists.
+        # That it is present whenever data IS returned is asserted on the Node
+        # side, where the payload is actually built.
+        self.assertIn("verifiedAt", success["properties"])
+        self.assertIn("seasonDataUnavailable", success["properties"])
         Draft202012Validator.check_schema(tool.output_schema)
 
     def test_season_rewards_arguments_are_validated(self) -> None:
@@ -347,6 +352,45 @@ class WowMcpTests(unittest.TestCase):
             )
         self.assertFalse(is_error, "degraded guidance is a normal answer")
         validate(result, server.TOOLS["get_class_guidance"].output_schema)
+
+    def test_season_unavailable_payload_is_valid_structured_output(self) -> None:
+        # A rolled-over season is a normal degradation. If it fails the tool's
+        # declared success schema, the MCP client sees invalid structured
+        # output and the tool looks broken instead of merely uninformed.
+        payload = {
+            "seasonDataUnavailable": True,
+            "seasonId": 19,
+            "knownSeasonIds": [18],
+            "provenance": "curated",
+            "message": "No curated reward data for season 19.",
+            "category": "all",
+        }
+
+        def fake_upstream(path, query, caller_address):
+            return payload, 200, None
+
+        with patch.object(server, "_upstream_query", fake_upstream):
+            result, is_error = server._invoke_tool("get_season_rewards", {"category": "all"}, {})
+
+        self.assertFalse(is_error)
+        validate(result, server.TOOLS["get_season_rewards"].output_schema)
+
+    def test_meta_builds_arguments_are_validated(self) -> None:
+        self.assertEqual(
+            server._validate_meta_arguments({"season": "SEASON-MN-2"})["season"], "season-mn-2"
+        )
+        self.assertEqual(server._validate_meta_arguments({"season": "season-mn-2", "region": "US"})["region"], "us")
+        for bad in (
+            {},
+            {"season": "not a slug!"},
+            {"season": "season-mn-2", "region": "mars"},
+            {"season": "season-mn-2", "pages": 0},
+            {"season": "season-mn-2", "pages": 99},
+            {"season": "season-mn-2", "specId": True},
+        ):
+            with self.subTest(bad=bad):
+                with self.assertRaises(ValueError):
+                    server._validate_meta_arguments(bad)
 
 
 if __name__ == "__main__":

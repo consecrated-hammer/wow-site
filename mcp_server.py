@@ -496,8 +496,18 @@ SEASON_REWARDS_SUCCESS_SCHEMA: dict[str, Any] = {
             "required": ["itemLevel", "goal", "provenance", "advisory", "note", "suggestions"],
             "additionalProperties": False,
         },
+        # `seasonDataUnavailable` is a legitimate success: the season rolled
+        # over and there is no curated data for it yet. It must validate
+        # against this schema, or a normal degradation becomes invalid MCP
+        # structured output and the tool looks broken to an agent.
+        "seasonDataUnavailable": {"type": "boolean"},
+        "seasonId": {"type": ["integer", "null"]},
+        "knownSeasonIds": {"type": "array", "items": {"type": "integer"}},
+        "message": {"type": "string"},
     },
-    "required": ["season", "patch", "verifiedAt", "provenance", "disclaimer", "sources", "category"],
+    # Only provenance and category are guaranteed on every response; the season
+    # descriptors are absent precisely when the season is unknown.
+    "required": ["provenance", "category"],
     "additionalProperties": False,
 }
 

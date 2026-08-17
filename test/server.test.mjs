@@ -1139,3 +1139,95 @@ test('guidance and gear-audit routes are guarded and validated', async () => {
   assert.equal(seen.spec, 'Holy');
   assert.equal(seen.equipment.provenance, 'blizzard');
 });
+
+test('counts distinct raid bosses for the Vault, not kills per difficulty', async () => {
+  const { greatVaultProgress, selectCurrentSeason } = await import('../lib/vault.mjs');
+
+  const start = Date.UTC(2026, 7, 11);
+  const end = Date.UTC(2026, 7, 18);
+  const killedAt = Date.UTC(2026, 7, 14);
+  const encounter = (id, name) => ({ encounter: { id, name }, last_kill_timestamp: killedAt });
+
+  const raidEncounters = {
+    expansions: [
+      { expansion: { name: 'Midnight' }, instances: [] },
+      {
+        expansion: { name: 'Current Season' },
+        instances: [{
+          instance: { name: 'The Venomous Abyss' },
+          modes: [
+            // The same boss killed on two difficulties in one reset.
+            { difficulty: { name: 'Normal' }, progress: { encounters: [encounter(1, 'Nek\'zali'), encounter(2, 'Twin Fangs')] } },
+            { difficulty: { name: 'Heroic' }, progress: { encounters: [encounter(1, 'Nek\'zali')] } }
+          ]
+        }]
+      }
+    ]
+  };
+  const seasonRewards = { greatVault: { slots: [
+    { slot: 'raid', thresholds: [2, 4, 6] },
+    { slot: 'dungeon', thresholds: [1, 4, 8] },
+    { slot: 'world', thresholds: [2, 4, 8] }
+  ] } };
+
+  const progress = greatVaultProgress({
+    period: { id: 1076, start_timestamp: start, end_timestamp: end },
+    keystoneProfile: { current_period: { best_runs: [] } },
+    raidEncounters,
+    seasonRewards
+  });
+
+  const raid = progress.slots.find((slot) => slot.slot === 'raid');
+  assert.equal(raid.count, 2, 'two distinct bosses, not three kills');
+  assert.equal(raid.unlocked, 1, 'and therefore only the first threshold');
+  assert.deepEqual(raid.detail.find((d) => d.encounter === "Nek'zali").difficulties, ['Normal', 'Heroic']);
+
+  // Blizzard does return a literal "Current Season" group; the fallback exists
+  // for a character that has no such group, not because the group is absent.
+  assert.equal(selectCurrentSeason(raidEncounters).expansion.name, 'Current Season');
+  assert.equal(
+    selectCurrentSeason({ expansions: [{ expansion: { name: 'Midnight' }, instances: [] }] }).expansion.name,
+    'Midnight',
+    'falls back to the newest expansion rather than reporting nothing'
+  );
+  assert.equal(selectCurrentSeason({}), null);
+
+  // Kills outside the weekly window must not count.
+  const stale = greatVaultProgress({
+    period: { start_timestamp: Date.UTC(2026, 7, 18), end_timestamp: Date.UTC(2026, 7, 25) },
+    keystoneProfile: {}, raidEncounters, seasonRewards
+  });
+  assert.equal(stale.slots.find((slot) => slot.slot === 'raid').count, 0);
+});
+
+test('contract-checks every Raider.IO page, not just the first', async () => {
+  const { createMetaBuilds } = await import('../lib/meta-builds.mjs');
+
+  const member = (spec) => ({ character: { name: 'X', class: { name: 'Druid' }, spec: { name: spec } }, loadout: 'CODE' });
+  const goodPage = { rankings: [{ run: { dungeon: { name: 'Skyreach' }, mythic_level: 12, roster: [member('Guardian'), member('a'), member('b'), member('c'), member('d')] } }] };
+  // A later page returns an error-shaped 200, which `rankings || []` would
+  // silently swallow into an understated result.
+  const brokenPage = { error: 'something went wrong' };
+
+  let page = 0;
+  const fetchImpl = async () => {
+    const payload = page++ === 0 ? goodPage : brokenPage;
+    return { ok: true, json: async () => payload };
+  };
+
+  const meta = createMetaBuilds({ fetchImpl, now: () => 0 });
+  await assert.rejects(
+    () => meta.metaBuilds({ season: 'season-mn-2', region: 'world', pages: 2 }),
+    /failed its contract on page 1/
+  );
+
+  // An empty page is legitimate (a season that has not started) and must not
+  // be treated as a contract failure.
+  page = 0;
+  const emptyOnly = createMetaBuilds({ fetchImpl: async () => ({ ok: true, json: async () => ({ rankings: [] }) }), now: () => 0 });
+  const empty = await emptyOnly.metaBuilds({ season: 'season-mn-2', pages: 2 });
+  assert.equal(empty.runsAnalysed, 0);
+  assert.deepEqual(empty.comps, []);
+  assert.equal(empty.source, 'raiderio');
+  assert.ok(empty.attribution.url, 'attribution travels even on an empty result');
+});
