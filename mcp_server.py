@@ -70,6 +70,8 @@ CHARACTER_SUCCESS_SCHEMA: dict[str, Any] = {
                     "quality": {"type": ["string", "null"]},
                     "sourceLabel": {"type": ["string", "null"]},
                     "icon": {"type": ["string", "null"]},
+                    "enchantments": {"type": "array", "items": {"type": "object", "additionalProperties": True}},
+                    "sockets": {"type": "array", "items": {"type": "object", "additionalProperties": True}},
                     "upgrade": {"type": "object", "additionalProperties": True},
                     "seasonUpgrades": {
                         "type": "array",
@@ -408,6 +410,7 @@ GUIDANCE_SUCCESS_SCHEMA: dict[str, Any] = {
         "statPriorities": {"type": ["array", "null"]},
         "statTargets": {"type": ["object", "null"]},
         "talentBuilds": {"type": ["array", "null"]},
+        "popularBuilds": {"type": ["object", "null"], "description": "Observed Archon builds keyed by content, difficulty and encounter."},
         "rotation": {"type": ["array", "object", "null"]},
         "trinkets": {"type": ["array", "null"]},
         "enchants": {"type": ["array", "null"]},
@@ -745,7 +748,7 @@ GUIDANCE_TOOL = types.Tool(
     title="Get Class Guidance",
     description=(
         "Get recommended stat priorities, stat targets, talent builds per content type (Raid, Mythic+, "
-        "Delves), tiered trinkets with the boss that drops them, best-in-slot lists, enchants, gems, "
+        "Delves), observed popular Archon builds, tiered trinkets with the boss that drops them, best-in-slot lists, enchants, gems, "
         "consumables and crafting for a class specialization. This is community guidance imported from "
         "the ClassCodex addon (MIT), aggregating Wowhead, Icy Veins, Archon and Murlok. It is labelled "
         "provenance='community' and carries lastScrape: treat it as advice as of that date, NOT as "
@@ -800,6 +803,22 @@ GEAR_AUDIT_TOOL = types.Tool(
         destructiveHint=False,
         idempotentHint=True,
         openWorldHint=True,
+    ),
+)
+
+MYTHIC_PLANNER_TOOL = types.Tool(
+    name="get_mythic_planner",
+    title="Plan Mythic Plus Dungeon Targets",
+    description=(
+        "Plan a character's current-season Mythic+ dungeons. Returns Blizzard best-run snapshots, curated "
+        "end-of-run and Vault rewards, and source-linked class-eligible upgrade targets, with dated community "
+        "guide matches ranked first. It does not claim drops are guaranteed or measure a fixed group's capability."
+    ),
+    inputSchema=CHARACTER_LOOKUP_INPUT_SCHEMA,
+    outputSchema={"type": "object", "additionalProperties": True},
+    annotations=types.ToolAnnotations(
+        title="Plan Mythic Plus Dungeon Targets", readOnlyHint=True, destructiveHint=False,
+        idempotentHint=True, openWorldHint=True,
     ),
 )
 
@@ -889,7 +908,7 @@ META_BUILDS_TOOL = types.Tool(
 
 TOOLS = {
     tool.name: tool
-    for tool in (CHARACTER_TOOL, TALENTS_TOOL, PROFILE_TOOL, ACHIEVEMENTS_TOOL, REALMS_TOOL, SEASON_REWARDS_TOOL, GUIDANCE_TOOL, GEAR_AUDIT_TOOL, VAULT_TOOL, RAID_PROGRESS_TOOL, META_BUILDS_TOOL)
+    for tool in (CHARACTER_TOOL, TALENTS_TOOL, PROFILE_TOOL, ACHIEVEMENTS_TOOL, REALMS_TOOL, SEASON_REWARDS_TOOL, GUIDANCE_TOOL, GEAR_AUDIT_TOOL, MYTHIC_PLANNER_TOOL, VAULT_TOOL, RAID_PROGRESS_TOOL, META_BUILDS_TOOL)
 }
 
 
@@ -1039,6 +1058,7 @@ def _invoke_tool(
     character_tools = {
         CHARACTER_TOOL.name: "/api/character",
         GEAR_AUDIT_TOOL.name: "/api/gear-audit",
+        MYTHIC_PLANNER_TOOL.name: "/api/mythic-planner",
         VAULT_TOOL.name: "/api/great-vault",
         RAID_PROGRESS_TOOL.name: "/api/raid-progress",
         TALENTS_TOOL.name: "/api/talents",

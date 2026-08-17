@@ -14,6 +14,7 @@ import {
 } from '../server.mjs';
 import { PROVENANCE as P, assertGearProvenance as assertGear } from '../lib/providers.mjs';
 import { resolveSeasonModule } from '../site/seasons/index.js';
+import { buildMythicPlanner } from '../lib/mythic-planner.mjs';
 
 function callApp(app, { method, url, address = '203.0.113.7' }) {
   return new Promise((resolve) => {
@@ -578,13 +579,15 @@ test('guards every API route against non-GET methods and rate limits', async () 
   for (const pathname of API_ROUTES.keys()) {
     const app = createApp({ characterService: stub });
 
-    const post = await callApp(app, { method: 'POST', url: pathname });
-    assert.equal(post.status, 405, `${pathname} must reject non-GET`);
+    const disallowedMethod = pathname === '/api/hammerlink-import' ? 'PUT' : 'POST';
+    const post = await callApp(app, { method: disallowedMethod, url: pathname });
+    assert.equal(post.status, 405, `${pathname} must reject ${disallowedMethod}`);
     assert.equal(JSON.parse(post.body).error, 'method_not_allowed');
 
     const head = await callApp(app, { method: 'HEAD', url: pathname });
     assert.equal(head.status, 405, `${pathname} must reject HEAD`);
 
+    if (pathname === '/api/hammerlink-import') continue;
     let limited = null;
     for (let attempt = 0; attempt < 62 && !limited; attempt += 1) {
       const result = await callApp(app, { method: 'GET', url: pathname });
@@ -1230,4 +1233,24 @@ test('contract-checks every Raider.IO page, not just the first', async () => {
   assert.deepEqual(empty.comps, []);
   assert.equal(empty.source, 'raiderio');
   assert.ok(empty.attribution.url, 'attribution travels even on an empty result');
+});
+
+test('mythic planner keeps timed status separate from targeted upgrades', () => {
+  const rewards = resolveSeasonModule(18).rewards;
+  const planner = buildMythicPlanner({
+    equipment: { character: { name: 'Bluehoof' }, items: [
+      { slot: 'FEET', slotName: 'Feet', name: 'Old boots', itemLevel: 289 },
+      { slot: 'CHEST', slotName: 'Chest', name: 'Old chest', itemLevel: 289 },
+      { slot: 'TRINKET_1', slotName: 'Trinket', name: 'Old trinket', itemLevel: 289 }
+    ] },
+    profile: { characterClass: { name: 'Paladin' }, mythicPlus: { rating: 1200, bestRuns: [{ dungeon: 'Altar of Fangs', keystoneLevel: 7, completedWithinTime: false }] } },
+    guidance: null, rewards, key: '+10'
+  });
+  assert.equal(planner.available, true);
+  assert.equal(planner.key, '+10');
+  const altar = planner.dungeons.find((entry) => entry.name === 'Altar of Fangs');
+  assert.equal(altar.bestRun.completedWithinTime, false);
+  assert.equal(altar.needsPractice, true);
+  assert.ok(altar.eligibleUpgrades.some((entry) => entry.name === 'Poison-Proof Stompers' && entry.itemLevelGain === 22));
+  assert.equal(planner.dungeons[0].needsPractice, true, 'unrun/over-time dungeons are sorted first');
 });

@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en-AU">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<meta name="theme-color" content="#0b0d14">
+<title>MCP — Consecrated Hammer</title>
+<meta name="description" content="Connect an MCP client to Consecrated Hammer's read-only World of Warcraft data tools.">
+<link rel="icon" href="assets/paladin-mcp-icon.png?v=1" type="image/png" sizes="192x192">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body class="mcp-page">
+
+<a class="skip-link" href="#main-content">Skip to main content</a>
+
+<header class="masthead">
+  <div class="wrap">
+    <a class="brand" href="/">
+      <img class="brand-mark" src="assets/paladin-mcp-icon.png" alt="" width="30" height="30">
+      <span class="brand-name">Consecrated Hammer</span>
+    </a>
+    <nav class="nav" aria-label="Primary">
+      <a href="/">Home</a>
+      <a href="/gear-advisor.html">Character gear</a>
+      <a href="/upgrade-tracks.html">Upgrade tracks</a>
+      <a href="/mcp.html" aria-current="page">MCP</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main-content">
+  <div class="wrap mcp-wrap">
+    <div class="mcp-intro">
+      <div>
+        <p class="eyebrow">Model Context Protocol</p>
+        <h1>WoW data for your agent</h1>
+        <p class="lede">Read-only character, progression, season and build data.</p>
+      </div>
+    </div>
+
+    <section class="mcp-section" aria-labelledby="connect-heading">
+      <div class="rule"><span id="connect-heading">Connect</span></div>
+      <div class="mcp-steps">
+        <article class="panel mcp-step">
+          <h2>Add the server</h2>
+          <p>Connect it to Claude, ChatGPT, or your preferred MCP client.</p>
+          <code class="endpoint-code">https://wow.batserver.au/mcp</code>
+        </article>
+        <article class="panel mcp-step">
+          <h2>Ask your agent</h2>
+          <p>Claude, ChatGPT, or another connected agent can use it for you.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="mcp-section" aria-labelledby="use-heading">
+      <div class="rule"><span id="use-heading">Use it well</span></div>
+      <div class="mcp-guidance panel">
+        <div><strong>Character lookup</strong><span>Give region, realm and character.</span></div>
+        <div><strong>Refresh sparingly</strong><span>Five-minute cache; one-minute refresh cooldown.</span></div>
+        <div><strong>Guidance is advice</strong><span>Check provenance and freshness.</span></div>
+      </div>
+    </section>
+
+    <section class="mcp-section" aria-labelledby="capabilities-heading">
+      <div class="rule"><span id="capabilities-heading">12 current capabilities</span></div>
+      <div class="mcp-capabilities">
+        <table>
+          <thead><tr><th>Capability</th><th>What it returns</th><th>Example prompt</th><th>Source</th></tr></thead>
+          <tbody>
+            <tr><td><code>get_character_profile</code></td><td>Profile, spec, item level and Mythic+ context.</td><td>“What is Bluehoof’s current M+ rating?”</td><td>Blizzard</td></tr>
+            <tr><td><code>get_character_equipment</code></td><td>Equipped slots and upgrade tracks.</td><td>“Which items can Bluehoof upgrade?”</td><td>Blizzard</td></tr>
+            <tr><td><code>get_character_talents</code></td><td>Active build and import code.</td><td>“Show Bluehoof’s talent import.”</td><td>Blizzard</td></tr>
+            <tr><td><code>get_character_achievements</code></td><td>Totals and recent achievements.</td><td>“What did Bluehoof achieve recently?”</td><td>Blizzard</td></tr>
+            <tr><td><code>list_realms</code></td><td>Valid realm names and slugs.</td><td>“Find the realm called Area 52 in US.”</td><td>Blizzard</td></tr>
+            <tr><td><code>get_gear_audit</code></td><td>Gear against guide-listed BiS and trinkets.</td><td>“Audit Bluehoof’s gear.”</td><td>Blizzard + community</td></tr>
+            <tr><td><code>get_mythic_planner</code></td><td>Dungeon targets, rewards and best-run status.</td><td>“Which keys should Bluehoof prioritise?”</td><td>Blizzard + curated + community</td></tr>
+            <tr><td><code>get_great_vault_progress</code></td><td>This week’s inferred Vault slots.</td><td>“What Vault slots has Bluehoof earned?”</td><td>Inferred</td></tr>
+            <tr><td><code>get_raid_progress</code></td><td>Raid bosses, difficulty and kills.</td><td>“Show Bluehoof’s raid progress.”</td><td>Blizzard</td></tr>
+            <tr><td><code>get_season_rewards</code></td><td>Rewards, crests, Vault and activities.</td><td>“What should I run at ilvl 292?”</td><td>Curated</td></tr>
+            <tr><td><code>get_class_guidance</code></td><td>Stats, talents, BiS and consumables.</td><td>“What does Holy Paladin need for M+?”</td><td>Community</td></tr>
+            <tr><td><code>get_meta_builds</code></td><td>Observed top M+ comps and builds.</td><td>“What are top Holy Paladins running?”</td><td>Raider.IO</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="mcp-note">Every capability is read-only. Results share the site's validation, cache and rate limits.</p>
+    </section>
+  </div>
+</main>
+
+<footer class="footer">
+  <div class="wrap">
+    <p>Consecrated Hammer — a personal fan site. Not affiliated with Blizzard Entertainment.</p>
+    <p>World of Warcraft and related marks are trademarks of Blizzard Entertainment, Inc.</p>
+  </div>
+</footer>
+
+</body>
+</html>

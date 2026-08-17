@@ -9,6 +9,8 @@ import { createGuidanceService } from './lib/guidance.mjs';
 import { PROVENANCE } from './lib/providers.mjs';
 import { greatVaultProgress, raidProgress } from './lib/vault.mjs';
 import { createMetaBuilds } from './lib/meta-builds.mjs';
+import { HammerLinkImportError, parseHammerLinkExport } from './lib/hammerlink-import.mjs';
+import { buildMythicPlanner } from './lib/mythic-planner.mjs';
 
 const SITE_ROOT = resolve(fileURLToPath(new URL('./site/', import.meta.url)));
 const PORT = positiveInteger(process.env.PORT, 80);
@@ -129,6 +131,41 @@ class HttpError extends Error {
   }
 }
 
+async function readJsonBody(request, maximumBytes = 70_000) {
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of request) {
+    size += chunk.length;
+    if (size > maximumBytes) throw new HttpError(413, 'payload_too_large', 'Import is too large.');
+    chunks.push(chunk);
+  }
+  try { return JSON.parse(Buffer.concat(chunks).toString('utf8')); }
+  catch { throw new HttpError(400, 'invalid_json', 'Import request must contain JSON.'); }
+}
+
+const HAMMERLINK_REGIONS = Object.freeze({ 1: 'us', 2: 'kr', 3: 'eu', 4: 'tw' });
+async function importHammerLink(request) {
+  const body = await readJsonBody(request);
+  if (!body || typeof body.export !== 'string') throw new HttpError(400, 'invalid_import', 'Paste a HammerLink export.');
+  let snapshot;
+  try { snapshot = parseHammerLinkExport(body.export); }
+  catch (error) {
+    if (error instanceof HammerLinkImportError) throw new HttpError(400, error.code, error.message);
+    throw error;
+  }
+  const region = HAMMERLINK_REGIONS[snapshot.character.region];
+  if (!region) throw new HttpError(400, 'unsupported_region', 'This HammerLink export has an unsupported region.');
+  return {
+    provenance: 'in_game_export',
+    lookup: { region, realm: normaliseRealm(snapshot.character.realm), name: normaliseCharacter(snapshot.character.name) },
+    capturedAt: new Date(snapshot.capturedAt * 1000).toISOString(),
+    character: snapshot.character,
+    equipmentCount: snapshot.equipment.length,
+    hasTalentImport: Boolean(snapshot.talents.importString),
+    vault: snapshot.vault
+  };
+}
+
 function pruneMap(map, maximum, currentTime = Date.now()) {
   for (const [key, entry] of map) {
     if (entry.expiresAt && entry.expiresAt <= currentTime) map.delete(key);
@@ -245,6 +282,22 @@ export function createCharacterService(options = {}) {
     return request;
   }
 
+  async function getCharacterRender(region, realm, character, accessToken) {
+    try {
+      const payload = await fetchJson(characterUrl(region, realm, character, 'character-media'), {
+        headers: { authorization: `Bearer ${accessToken}` }
+      });
+      // "main-raw" is Blizzard's full-character render; avatar is a useful fallback
+      // for characters whose full render is not available yet.
+      return payload.assets?.find((asset) => asset.key === 'main-raw')?.value
+        || payload.assets?.find((asset) => asset.key === 'avatar')?.value
+        || null;
+    } catch {
+      // Equipment remains the primary result if this optional presentation asset fails.
+      return null;
+    }
+  }
+
   async function fetchCharacter(region, realm, character) {
     const accessToken = await getToken();
     const locale = REGION_LOCALES[region];
@@ -263,7 +316,8 @@ export function createCharacterService(options = {}) {
       throw error;
     }
 
-    const items = await Promise.all((payload.equipped_items || []).map(async (item) => ({
+    const [items, render] = await Promise.all([
+      Promise.all((payload.equipped_items || []).map(async (item) => ({
       slot: item.slot?.type || null,
       slotName: item.slot?.name || null,
       itemId: item.item?.id || null,
@@ -272,9 +326,13 @@ export function createCharacterService(options = {}) {
       quality: item.quality?.type || null,
       sourceLabel: item.name_description?.display_string || null,
       icon: await getMediaIcon(item.media?.key?.href, accessToken),
+      enchantments: (item.enchantments || []).map((entry) => ({ name: entry.display_string || null, slot: entry.enchantment_slot?.type || null })),
+      sockets: (item.sockets || []).map((entry) => ({ type: entry.socket_type?.type || null, itemName: entry.item?.name || null })),
       upgrade: resolveUpgrade(item),
       seasonUpgrades: findSeasonUpgrades(item.level?.value)
-    })));
+      }))),
+      getCharacterRender(region, realm, character, accessToken)
+    ]);
 
     return {
       source: 'Blizzard',
@@ -283,6 +341,7 @@ export function createCharacterService(options = {}) {
         realm: payload.character?.realm?.name || realm,
         region: region.toUpperCase()
       },
+      render,
       items
     };
   }
@@ -743,6 +802,15 @@ function validateSpecQuery(url) {
   return { className, spec, specId };
 }
 
+function validatePlannerQuery(url) {
+  const lookup = validateLookup(url);
+  const key = String(url.searchParams.get('key') || '+10');
+  if (!/^\+(?:2-3|[4-9]|10|11|12 and above)$/.test(key)) {
+    throw new HttpError(400, 'invalid_key', 'Choose a supported Mythic+ key bracket.');
+  }
+  return { ...lookup, key };
+}
+
 const SEASON_SLUG_PATTERN = /^[a-z0-9-]{3,40}$/;
 
 function validateMetaQuery(url) {
@@ -895,6 +963,22 @@ export const API_ROUTES = new Map([
       spec: { class: className, specialization: spec }
     };
   }],
+  ['/api/mythic-planner', async (service, url) => {
+    const query = validatePlannerQuery(url);
+    const [equipment, profile] = await Promise.all([service.lookup(query), service.lookupProfile(query)]);
+    const className = profile?.characterClass?.name;
+    const spec = profile?.activeSpecialization?.name;
+    if (!className || !spec) {
+      throw new HttpError(502, 'upstream_error', 'Blizzard did not report a class and specialization for this character.');
+    }
+    const guidance = await service.guidance.classGuidance({ className, spec, specId: profile.activeSpecialization?.id ?? null });
+    const seasonId = await service.currentSeasonId(query.region);
+    const seasonModule = resolveSeasonModule(seasonId);
+    return buildMythicPlanner({
+      equipment: { ...equipment, provenance: PROVENANCE.BLIZZARD }, profile,
+      guidance: guidance.available ? guidance : null, rewards: seasonModule?.rewards ?? null, key: query.key
+    });
+  }],
   ['/api/great-vault', async (service, url) => {
     const seasonId = await service.currentSeasonId();
     const seasonModule = resolveSeasonModule(seasonId);
@@ -912,7 +996,8 @@ export const API_ROUTES = new Map([
     // Resolve the live season unless the caller pinned one explicitly.
     const seasonId = query.seasonId ?? await service.currentSeasonId();
     return seasonRewards({ ...query, seasonId });
-  }]
+  }],
+  ['/api/hammerlink-import', { POST: (_service, _url, request) => importHammerLink(request) }]
 ]);
 
 export function createApp(options = {}) {
@@ -936,7 +1021,7 @@ export function createApp(options = {}) {
     setSecurityHeaders(response);
     try {
       const url = new URL(request.url, 'http://localhost');
-      if (request.method !== 'GET' && request.method !== 'HEAD') {
+      if (request.method !== 'GET' && request.method !== 'HEAD' && request.method !== 'POST') {
         throw new HttpError(405, 'method_not_allowed', 'Method not allowed.');
       }
       if (url.pathname === '/healthz') {
@@ -946,9 +1031,10 @@ export function createApp(options = {}) {
       }
       const apiHandler = API_ROUTES.get(url.pathname);
       if (apiHandler) {
-        if (request.method !== 'GET') throw new HttpError(405, 'method_not_allowed', 'Method not allowed.');
+        const handler = typeof apiHandler === 'function' ? (request.method === 'GET' ? apiHandler : null) : apiHandler[request.method];
+        if (!handler) throw new HttpError(405, 'method_not_allowed', 'Method not allowed.');
         if (!allowRequest(clientAddress(request))) throw new HttpError(429, 'rate_limited', 'Too many requests.', '60');
-        json(response, 200, await apiHandler(characterService, url));
+        json(response, 200, await handler(characterService, url, request));
         return;
       }
       await serveStatic(url.pathname, response, request.method === 'HEAD');

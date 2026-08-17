@@ -8,7 +8,8 @@ Blizzard character equipment API.
 ## Contents
 
 - `site/index.html` — landing page and tool index
-- `site/gear-advisor.html` — gear advisor tool
+- `site/gear-advisor.html` — Blizzard-backed character gear tool
+- `site/upgrade-tracks.html` — manual item-level and upgrade-track comparison
 - `site/styles.css` — shared site theme
 - `site/gear-advisor.css` / `site/gear-advisor.js` — gear advisor only
 - `site/season-data.js` — shared season tracks and Blizzard bonus-ID mapping
@@ -20,11 +21,17 @@ Blizzard character equipment API.
 
 ## Tools
 
-### Gear advisor
+### Character gear
 
-Compares the season's gear upgrade tracks against your item level. Move the
-slider and each rank re-colours as an upgrade, sidegrade or downgrade; each
-track also reports the first rank that beats you and what it costs in crests.
+Looks up a character's current equipment from Blizzard, sorts low item-level
+slots first, shows each item's real current-season path, and labels guide-listed
+BiS coverage separately as dated community advice.
+
+### Upgrade tracks
+
+Compares every rank on the season's upgrade tracks against a manually selected
+item level. Each cell uses a symbol as well as colour, and each track reports
+the first rank that beats the selected level and its crest cost.
 
 Season numbers and Blizzard upgrade bonus IDs are patch-specific and live in
 one place: `site/season-data.js`.
@@ -50,19 +57,13 @@ on each item card so the current-path summary remains the primary view.
 ### MCP v2
 
 The public Streamable HTTP endpoint at `/mcp` uses the official Python SDK v2
-and exposes five read-only structured tools:
+and exposes eleven read-only structured tools, covering character equipment,
+profile, talents, achievements, realms, season rewards, class guidance, gear
+audits, Great Vault progress, raid progress, and observed meta builds.
 
-- `get_character_equipment` returns the same character, item, current-path,
-  replacement-threshold, fetch-time, and cache data used by the site.
-- `get_character_talents` returns the active specialization, hero tree, current
-  class/spec/hero talent selections, and in-game import code.
-- `get_character_profile` returns compact identity and progression context,
-  including item levels, achievement points, current-season Mythic+ rating,
-  and best runs.
-- `get_character_achievements` returns completion totals, points, and up to 25
-  recent achievements without emitting the full multi-thousand-entry history.
-- `list_realms` returns Blizzard realm IDs, display names, and slugs for a
-  region so an agent can validate lookup inputs.
+The MCP sidecar forwards to the same guarded internal JSON routes used by the
+site so player and agent traffic share caches, rate limits, validation, and
+audit handling.
 
 All tools call the existing internal JSON API, so they share its 60-request
 per-minute caller limit, five-minute character cache, one-day realm cache,

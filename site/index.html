@@ -4,50 +4,72 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
+<meta name="theme-color" content="#0b0d14">
 <title>Consecrated Hammer — World of Warcraft tools</title>
 <meta name="description" content="A small set of hand-built World of Warcraft planning tools.">
 <link rel="icon" href="assets/paladin-mcp-icon.png?v=1" type="image/png" sizes="192x192">
 <link rel="stylesheet" href="styles.css">
 </head>
-<body>
+<body class="home-page">
+
+<a class="skip-link" href="#main-content">Skip to main content</a>
 
 <header class="masthead">
   <div class="wrap">
     <a class="brand" href="/">
-      <img class="brand-mark" src="assets/favicon.svg" alt="" width="30" height="30">
+      <img class="brand-mark" src="assets/paladin-mcp-icon.png" alt="" width="30" height="30">
       <span class="brand-name">Consecrated Hammer</span>
     </a>
     <nav class="nav" aria-label="Primary">
       <a href="/" aria-current="page">Home</a>
-      <a href="/gear-advisor.html">Gear advisor</a>
+      <a href="/gear-advisor.html">Character gear</a>
+      <a href="/mythic-planner.html">Mythic+ planner</a>
+      <a href="/upgrade-tracks.html">Upgrade tracks</a>
+      <a href="/mcp.html">MCP</a>
     </nav>
   </div>
 </header>
 
-<main>
+<main id="main-content">
   <div class="wrap">
 
-    <div class="page-head">
-      <p class="eyebrow">Midnight 12.1</p>
-      <h1>Tools for the current season</h1>
-      <p class="lede">
-        A small, hand-built set of World of Warcraft planning tools. No accounts,
-        no tracking, no addon required — just the numbers that decide what to do
-        with a drop.
-      </p>
-    </div>
-
-    <div class="rule"><span>Tools</span></div>
+    <div class="rule"><span>Choose a tool</span></div>
 
     <div class="cards">
 
-      <a class="card" href="/gear-advisor.html">
-        <h2>Gear advisor</h2>
+      <a class="card module-card module-card-featured" href="/gear-advisor.html">
+        <span class="module-kicker">Character tool</span>
+        <span class="module-arrow" aria-hidden="true">↗</span>
+        <h2>Character gear</h2>
         <p>
-          Set your item level and see which upgrade tracks still beat it, at
-          which rank, and what it costs in crests.
+          Find low slots, current upgrade paths, and guide-listed gear from a
+          live Blizzard profile.
         </p>
+        <span class="module-meta">Region &middot; Realm &middot; Character</span>
       </a>
+
+      <a class="card module-card" href="/mythic-planner.html">
+        <span class="module-kicker">Decision tool</span><span class="module-arrow" aria-hidden="true">↗</span>
+        <h2>Mythic+ planner</h2><p>See current dungeon upgrade targets alongside your best recorded runs.</p>
+        <span class="module-meta">Season 2 loot · character history</span>
+      </a>
+
+      <a class="card module-card" href="/upgrade-tracks.html">
+        <span class="module-kicker">Quick reference</span>
+        <span class="module-arrow" aria-hidden="true">↗</span>
+        <h2>Upgrade tracks</h2>
+        <p>Compare an item level against every rank and see the first upgrade worth taking.</p>
+        <span class="module-meta">Adventurer through Myth</span>
+      </a>
+
+      <a class="card module-card" href="/mcp.html">
+        <span class="module-kicker">For agents</span>
+        <span class="module-arrow" aria-hidden="true">↗</span>
+        <h2>MCP</h2>
+        <p>Connect a compatible AI client to read-only character, season and build data.</p>
+        <span class="module-meta">11 tools · Streamable HTTP</span>
+      </a>
+      <a class="card module-card" href="/hammerlink.html"><span class="module-kicker">Retail addon</span><span class="module-arrow" aria-hidden="true">↗</span><h2>HammerLink</h2><p>Export an exact live Great Vault snapshot, then paste it into Character gear.</p><span class="module-meta">CurseForge · GitHub</span></a>
 
     </div>
 
