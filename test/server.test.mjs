@@ -1055,3 +1055,87 @@ test('a broken upstream contract never breaks the MCP surface', async () => {
   assert.equal(body.seasonDataUnavailable, true);
   assert.ok(body.message, 'the agent is told why, in the success payload');
 });
+
+test('class guidance degrades instead of failing when data is missing', async () => {
+  const { createGuidanceService } = await import('../lib/guidance.mjs');
+
+  // No snapshot imported at all.
+  const empty = createGuidanceService({
+    referenceData: { get: async () => ({ data: null, meta: {} }), putSnapshot: async () => ({}) }
+  });
+  const missing = await empty.classGuidance({ className: 'paladin', spec: 'holy' });
+  assert.equal(missing.available, false);
+  assert.match(missing.reason, /No ClassCodex snapshot/);
+  assert.equal(missing.provenance, 'community');
+
+  // Snapshot present, talent trees absent: builds still come back as import
+  // strings with a warning, because an undecoded build is still usable.
+  const snapshot = {
+    addonVersion: '0.36.3',
+    lastScrape: '2026-07-02',
+    specs: {
+      'PALADIN/holy': {
+        classToken: 'PALADIN',
+        spec: 'holy',
+        guide: { priorities: [{ stats: [['Mastery']] }], talents: [{ context: 'Mythic+', exportString: 'CEEAAAA' }] }
+      }
+    }
+  };
+  const noTrees = createGuidanceService({
+    referenceData: {
+      get: async (id) => (id === 'classcodex' ? { data: snapshot, meta: {} } : { data: null, meta: {} }),
+      putSnapshot: async () => ({})
+    }
+  });
+  const degraded = await noTrees.classGuidance({ className: 'paladin', spec: 'holy', specId: 65 });
+  assert.equal(degraded.available, true);
+  assert.equal(degraded.talentBuilds[0].exportString, 'CEEAAAA', 'the import string survives');
+  assert.equal(degraded.talentBuilds[0].decoded, undefined);
+  assert.match(degraded.warnings.join(' '), /Talent trees are unavailable/);
+
+  // An unknown spec says so and names some it does know.
+  const unknown = await noTrees.classGuidance({ className: 'paladin', spec: 'nonsense' });
+  assert.equal(unknown.available, false);
+  assert.ok(unknown.knownSpecs.includes('PALADIN/holy'));
+});
+
+test('guidance and gear-audit routes are guarded and validated', async () => {
+  const guidanceService = {
+    classGuidance: async (query) => ({ available: true, echo: query }),
+    gearAudit: async () => ({ summary: { slotsEquipped: 0 } })
+  };
+  const characterService = {
+    guidance: guidanceService,
+    lookup: async () => ({ items: [], character: { name: 'Bluehoof' } }),
+    lookupProfile: async () => ({ characterClass: { name: 'Paladin' }, activeSpecialization: { name: 'Holy' } })
+  };
+  const app = createApp({ characterService });
+
+  assert.ok(API_ROUTES.has('/api/class-guidance'), 'new routes join the guarded table');
+  assert.ok(API_ROUTES.has('/api/gear-audit'));
+
+  const ok = await callApp(app, { method: 'GET', url: '/api/class-guidance?class=paladin&spec=holy&specId=65' });
+  assert.equal(ok.status, 200);
+  assert.deepEqual(JSON.parse(ok.body).echo, { className: 'paladin', spec: 'holy', specId: 65 });
+
+  for (const [query, code] of [
+    ['class=&spec=holy', 'invalid_class'],
+    ['class=paladin&spec=', 'invalid_spec'],
+    ['class=paladin&spec=holy&specId=abc', 'invalid_spec_id'],
+    ['class=<script>&spec=holy', 'invalid_class']
+  ]) {
+    const bad = await callApp(app, { method: 'GET', url: `/api/class-guidance?${query}` });
+    assert.equal(bad.status, 400, query);
+    assert.equal(JSON.parse(bad.body).error, code, query);
+  }
+
+  // The audit takes class and spec from Blizzard, never from the caller, so a
+  // character can't be audited against another spec's guidance.
+  let seen = null;
+  characterService.guidance.gearAudit = async (args) => { seen = args; return { summary: {} }; };
+  const audit = await callApp(app, { method: 'GET', url: '/api/gear-audit?region=us&realm=dathremar&name=Bluehoof&class=warrior&spec=arms' });
+  assert.equal(audit.status, 200);
+  assert.equal(seen.className, 'Paladin', 'class comes from the profile, not the query string');
+  assert.equal(seen.spec, 'Holy');
+  assert.equal(seen.equipment.provenance, 'blizzard');
+});

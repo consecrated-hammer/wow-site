@@ -4,6 +4,9 @@ import { extname, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { SEASON } from './site/season-data.js';
 import { resolveSeasonModule, seasonDataUnavailable } from './site/seasons/index.js';
+import { createReferenceData } from './lib/reference-data.mjs';
+import { createGuidanceService } from './lib/guidance.mjs';
+import { PROVENANCE } from './lib/providers.mjs';
 
 const SITE_ROOT = resolve(fileURLToPath(new URL('./site/', import.meta.url)));
 const PORT = positiveInteger(process.env.PORT, 80);
@@ -674,6 +677,22 @@ function validateSeasonId(url) {
   return seasonId;
 }
 
+const SPEC_PATTERN = /^[a-z ]{2,24}$/;
+
+function validateSpecQuery(url) {
+  const className = String(url.searchParams.get('class') || '').trim().toLowerCase();
+  const spec = String(url.searchParams.get('spec') || '').trim().toLowerCase();
+  if (!SPEC_PATTERN.test(className)) throw new HttpError(400, 'invalid_class', 'Enter a valid class name.');
+  if (!SPEC_PATTERN.test(spec)) throw new HttpError(400, 'invalid_spec', 'Enter a valid specialization name.');
+  const rawSpecId = url.searchParams.get('specId');
+  let specId = null;
+  if (rawSpecId) {
+    specId = Number(rawSpecId);
+    if (!Number.isInteger(specId) || specId < 1) throw new HttpError(400, 'invalid_spec_id', 'specId must be a positive whole number.');
+  }
+  return { className, spec, specId };
+}
+
 // Curated data only. The envelope repeats provenance/season/patch/verifiedAt on
 // every response so a consumer can never mistake it for Blizzard API output.
 //
@@ -781,6 +800,23 @@ export const API_ROUTES = new Map([
   ['/api/profile', (service, url) => service.lookupProfile(validateLookup(url))],
   ['/api/achievements', (service, url) => service.lookupAchievements(validateLookup(url))],
   ['/api/realms', (service, url) => service.listRealms(validateRegion(url))],
+  ['/api/class-guidance', async (service, url) => service.guidance.classGuidance(validateSpecQuery(url))],
+  ['/api/gear-audit', async (service, url) => {
+    const lookup = validateLookup(url);
+    // The class and spec come from Blizzard's own profile rather than the
+    // caller, so an audit can never be run against the wrong spec's guidance.
+    const [equipment, profile] = await Promise.all([service.lookup(lookup), service.lookupProfile(lookup)]);
+    const className = profile?.characterClass?.name;
+    const spec = profile?.activeSpecialization?.name;
+    if (!className || !spec) {
+      throw new HttpError(502, 'upstream_error', 'Blizzard did not report a class and specialization for this character.');
+    }
+    return {
+      ...await service.guidance.gearAudit({ equipment: { ...equipment, provenance: PROVENANCE.BLIZZARD }, className, spec }),
+      character: equipment.character,
+      spec: { class: className, specialization: spec }
+    };
+  }],
   ['/api/season-rewards', async (service, url) => {
     const query = validateSeasonQuery(url);
     // Resolve the live season unless the caller pinned one explicitly.
@@ -791,6 +827,12 @@ export const API_ROUTES = new Map([
 
 export function createApp(options = {}) {
   const characterService = options.characterService || createCharacterService(options);
+  const referenceData = options.referenceData || createReferenceData(options);
+  // Attached rather than merged so the character service keeps its single
+  // responsibility, and so tests can supply either half independently.
+  if (!characterService.guidance) {
+    characterService.guidance = options.guidanceService || createGuidanceService({ referenceData, ...options });
+  }
   const allowRequest = createRateLimiter();
 
   return async function app(request, response) {
@@ -829,10 +871,46 @@ export function createApp(options = {}) {
   };
 }
 
+/* Populate reference data in the background.
+ *
+ * Deliberately not awaited before listen(): a slow raidbots fetch or an
+ * unreadable addon directory must not stop the site or the MCP from serving.
+ * Every consumer already degrades when a dataset is missing, so arriving late
+ * is strictly better than not starting. */
+export async function hydrateReferenceData({ referenceData, guidance, log = console }) {
+  const results = [];
+  try {
+    results.push(await referenceData.refreshTalentTrees());
+  } catch (error) {
+    results.push({ id: 'talent-trees', outcome: 'unavailable', reason: error.message });
+  }
+  try {
+    results.push(await guidance.refreshSnapshot());
+  } catch (error) {
+    results.push({ id: 'classcodex', outcome: 'unavailable', reason: error.message });
+  }
+  for (const result of results) {
+    const line = `reference-data ${result.id}: ${result.outcome} (${result.reason})`;
+    if (result.outcome === 'rejected' || result.outcome === 'unavailable') log.error(line);
+    else log.log(line);
+  }
+  return results;
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const server = createServer(createApp());
+  const referenceData = createReferenceData();
+  const guidance = createGuidanceService({ referenceData });
+  const server = createServer(createApp({ referenceData, guidanceService: guidance }));
   server.listen(PORT, '0.0.0.0', () => {
     console.log(`Consecrated Hammer listening on :${PORT}`);
+    hydrateReferenceData({ referenceData, guidance }).catch((error) => {
+      console.error(`reference-data hydration failed: ${error.message}`);
+    });
+    // Re-check on the same cadence as the backstop. Unchanged upstreams cost a
+    // 304, so this is cheap; the point is catching hotfixes without a restart.
+    setInterval(() => {
+      hydrateReferenceData({ referenceData, guidance }).catch(() => {});
+    }, 6 * 60 * 60 * 1000).unref();
   });
 
   function shutdown() {

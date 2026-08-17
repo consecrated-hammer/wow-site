@@ -289,7 +289,59 @@ class WowMcpTests(unittest.TestCase):
         self.assertEqual(result["provenance"], "curated")
         validate(result, server.TOOLS["get_season_rewards"].output_schema)
 
+    def test_guidance_and_audit_tools_declare_community_provenance(self) -> None:
+        guidance = server.TOOLS["get_class_guidance"]
+        success = guidance.output_schema["oneOf"][0]
+        # Guidance must be unmistakably community data, never Blizzard's.
+        self.assertEqual(success["properties"]["provenance"]["const"], "community")
+        self.assertEqual(success["properties"]["source"]["const"], "classcodex")
+        self.assertIn("lastScrape", success["properties"])
+        self.assertIn("NOT as Blizzard data", guidance.description)
+        Draft202012Validator.check_schema(guidance.output_schema)
+
+        audit = server.TOOLS["get_gear_audit"]
+        Draft202012Validator.check_schema(audit.output_schema)
+        self.assertIn("read from Blizzard, not from the caller", audit.description)
+        for tool in (guidance, audit):
+            annotations = tool.annotations.model_dump(by_alias=True, exclude_none=True)
+            self.assertTrue(annotations["readOnlyHint"])
+            self.assertFalse(annotations["destructiveHint"])
+
+    def test_guidance_arguments_are_validated(self) -> None:
+        self.assertEqual(
+            server._validate_guidance_arguments({"className": " Paladin ", "spec": "Holy"}),
+            {"className": "paladin", "spec": "holy", "specId": None},
+        )
+        for bad in (
+            {"className": "paladin"},
+            {"className": "<script>", "spec": "holy"},
+            {"className": "paladin", "spec": "holy", "specId": 0},
+            {"className": "paladin", "spec": "holy", "specId": True},
+        ):
+            with self.subTest(bad=bad):
+                with self.assertRaises(ValueError):
+                    server._validate_guidance_arguments(bad)
+
+    def test_unavailable_guidance_is_a_success_not_a_tool_failure(self) -> None:
+        # A missing snapshot must not surface as an MCP error, or an agent
+        # loses the tool mid-conversation instead of being told to try later.
+        payload = {
+            "provenance": "community",
+            "source": "classcodex",
+            "available": False,
+            "reason": "No ClassCodex snapshot has been imported yet.",
+        }
+
+        def fake_upstream(path, query, caller_address):
+            return payload, 200, None
+
+        with patch.object(server, "_upstream_query", fake_upstream):
+            result, is_error = server._invoke_tool(
+                "get_class_guidance", {"className": "paladin", "spec": "holy"}, {}
+            )
+        self.assertFalse(is_error, "degraded guidance is a normal answer")
+        validate(result, server.TOOLS["get_class_guidance"].output_schema)
+
 
 if __name__ == "__main__":
     unittest.main()
-

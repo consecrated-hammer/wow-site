@@ -1,4 +1,5 @@
 import json
+import re
 import logging
 import os
 import threading
@@ -321,6 +322,69 @@ ERROR_OUTPUT_SCHEMA: dict[str, Any] = {
 # are typed strictly so an agent can always read provenance/verifiedAt; the
 # static reward tables are typed as objects rather than leaf-by-leaf, because
 # over-specifying hand-curated data costs maintenance without adding safety.
+# Community guidance, never Blizzard output. `available` is part of the success
+# contract: missing guidance is a normal answer, not an error, so an agent gets
+# a schema-valid response instead of a tool failure.
+GUIDANCE_SUCCESS_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "provenance": {"const": "community"},
+        "source": {"const": "classcodex"},
+        "available": {"type": "boolean"},
+        "reason": {"type": "string"},
+        "addonVersion": {"type": ["string", "null"]},
+        "lastScrape": {"type": ["string", "null"], "description": "Date the guidance was scraped. Treat advice as of this date."},
+        "licence": {"type": ["string", "null"]},
+        "class": {"type": "string"},
+        "spec": {"type": "string"},
+        "statPriorities": {"type": ["array", "null"]},
+        "statTargets": {"type": ["object", "null"]},
+        "talentBuilds": {"type": ["array", "null"]},
+        "rotation": {"type": ["array", "object", "null"]},
+        "trinkets": {"type": ["array", "null"]},
+        "enchants": {"type": ["array", "null"]},
+        "gems": {"type": ["object", "null"]},
+        "consumables": {"type": ["object", "null"]},
+        "bisGear": {"type": ["object", "null"]},
+        "crafting": {"type": ["object", "null"]},
+        "sourceUrls": {"type": ["object", "null"]},
+        "knownSpecs": {"type": "array", "items": {"type": "string"}},
+        "warnings": {"type": ["array", "null"], "items": {"type": "string"}},
+        "contractViolation": {"type": ["object", "null"]},
+    },
+    "required": ["provenance", "source", "available"],
+    "additionalProperties": False,
+}
+
+GUIDANCE_OUTPUT_SCHEMA: dict[str, Any] = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "oneOf": [GUIDANCE_SUCCESS_SCHEMA, ERROR_OUTPUT_SCHEMA],
+}
+
+# Mixed provenance by design: `equipped` is Blizzard, `recommendation` is
+# community. Each slot carries both so the two can never be conflated.
+GEAR_AUDIT_SUCCESS_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "character": {"type": ["object", "null"]},
+        "spec": {"type": ["object", "null"]},
+        "guidance": {"type": ["object", "null"]},
+        "guidanceUnavailable": {"type": "string"},
+        "summary": {"type": "object"},
+        "slots": {"type": "array"},
+        "trinketUpgrades": {"type": "array"},
+    },
+    "required": ["summary", "slots"],
+    "additionalProperties": False,
+}
+
+GEAR_AUDIT_OUTPUT_SCHEMA: dict[str, Any] = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "oneOf": [GEAR_AUDIT_SUCCESS_SCHEMA, ERROR_OUTPUT_SCHEMA],
+}
+
 SEASON_REWARDS_SUCCESS_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -598,9 +662,72 @@ SEASON_REWARDS_TOOL = types.Tool(
     ),
 )
 
+GUIDANCE_TOOL = types.Tool(
+    name="get_class_guidance",
+    title="Get Class Guidance",
+    description=(
+        "Get recommended stat priorities, stat targets, talent builds per content type (Raid, Mythic+, "
+        "Delves), tiered trinkets with the boss that drops them, best-in-slot lists, enchants, gems, "
+        "consumables and crafting for a class specialization. This is community guidance imported from "
+        "the ClassCodex addon (MIT), aggregating Wowhead, Icy Veins, Archon and Murlok. It is labelled "
+        "provenance='community' and carries lastScrape: treat it as advice as of that date, NOT as "
+        "Blizzard data and NOT as current. Pass specId to have talent builds decoded into named talents."
+    ),
+    inputSchema={
+        "type": "object",
+        "properties": {
+            "className": {"type": "string", "description": "Class name, e.g. 'paladin'."},
+            "spec": {"type": "string", "description": "Specialization, e.g. 'holy'."},
+            "specId": {"type": "integer", "minimum": 1, "description": "Blizzard spec id; supplying it decodes the talent builds."},
+        },
+        "required": ["className", "spec"],
+        "additionalProperties": False,
+    },
+    outputSchema=GUIDANCE_OUTPUT_SCHEMA,
+    annotations=types.ToolAnnotations(
+        title="Get Class Guidance",
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+)
+
+GEAR_AUDIT_TOOL = types.Tool(
+    name="get_gear_audit",
+    title="Audit Equipped Gear Against Recommendations",
+    description=(
+        "Cross-reference a character's equipped items against recommended best-in-slot and trinket "
+        "lists, reporting which slots are already best-in-slot, which are merely listed, and which "
+        "high-tier trinkets are missing along with the boss that drops them. The character's class and "
+        "specialization are read from Blizzard, not from the caller. Each finding states its side: what "
+        "is equipped is provenance='blizzard' and authoritative, what is recommended is "
+        "provenance='community' opinion carrying its own scrape date. Slots the guidance has no opinion "
+        "on are reported without a recommendation rather than as a problem."
+    ),
+    inputSchema={
+        "type": "object",
+        "properties": {
+            "region": {"type": "string", "enum": [*REGIONS, *(region.upper() for region in REGIONS)]},
+            "realm": {"type": "string", "description": "Realm slug, e.g. 'dathremar'."},
+            "character": {"type": "string", "description": "Character name."},
+        },
+        "required": ["region", "realm", "character"],
+        "additionalProperties": False,
+    },
+    outputSchema=GEAR_AUDIT_OUTPUT_SCHEMA,
+    annotations=types.ToolAnnotations(
+        title="Audit Equipped Gear Against Recommendations",
+        readOnlyHint=True,
+        destructiveHint=False,
+        idempotentHint=True,
+        openWorldHint=True,
+    ),
+)
+
 TOOLS = {
     tool.name: tool
-    for tool in (CHARACTER_TOOL, TALENTS_TOOL, PROFILE_TOOL, ACHIEVEMENTS_TOOL, REALMS_TOOL, SEASON_REWARDS_TOOL)
+    for tool in (CHARACTER_TOOL, TALENTS_TOOL, PROFILE_TOOL, ACHIEVEMENTS_TOOL, REALMS_TOOL, SEASON_REWARDS_TOOL, GUIDANCE_TOOL, GEAR_AUDIT_TOOL)
 }
 
 
@@ -674,6 +801,23 @@ def _validate_season_arguments(arguments: dict[str, Any]) -> dict[str, Any]:
     return {"category": category, "itemLevel": item_level}
 
 
+def _validate_guidance_arguments(arguments: dict[str, Any]) -> dict[str, Any]:
+    class_name = arguments.get("className")
+    spec = arguments.get("spec")
+    for label, value in (("className", class_name), ("spec", spec)):
+        if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z ]{2,24}", value.strip()):
+            raise ValueError(f"{label} must be a class or specialization name")
+    spec_id = arguments.get("specId")
+    if spec_id is not None:
+        if isinstance(spec_id, bool) or not isinstance(spec_id, int) or spec_id < 1:
+            raise ValueError("specId must be a positive whole number")
+    return {
+        "className": class_name.strip().lower(),
+        "spec": spec.strip().lower(),
+        "specId": spec_id,
+    }
+
+
 def _upstream_query(
     path: str,
     query: dict[str, Any],
@@ -707,6 +851,7 @@ def _invoke_tool(
     started = time.monotonic()
     character_tools = {
         CHARACTER_TOOL.name: "/api/character",
+        GEAR_AUDIT_TOOL.name: "/api/gear-audit",
         TALENTS_TOOL.name: "/api/talents",
         PROFILE_TOOL.name: "/api/profile",
         ACHIEVEMENTS_TOOL.name: "/api/achievements",
@@ -720,6 +865,12 @@ def _invoke_tool(
         }
     elif name == REALMS_TOOL.name:
         audit_arguments = {"region": arguments.get("region")}
+    elif name == GUIDANCE_TOOL.name:
+        audit_arguments = {
+            "className": arguments.get("className"),
+            "spec": arguments.get("spec"),
+            "specId": arguments.get("specId"),
+        }
     elif name == SEASON_REWARDS_TOOL.name:
         audit_arguments = {
             "category": arguments.get("category", "all"),
@@ -746,6 +897,12 @@ def _invoke_tool(
             validated = _validate_region_arguments(arguments)
             query = {"region": validated["region"]}
             path = "/api/realms"
+        elif name == GUIDANCE_TOOL.name:
+            validated = _validate_guidance_arguments(arguments)
+            query = {"class": validated["className"], "spec": validated["spec"]}
+            if validated["specId"] is not None:
+                query["specId"] = validated["specId"]
+            path = "/api/class-guidance"
         elif name == SEASON_REWARDS_TOOL.name:
             validated = _validate_season_arguments(arguments)
             query = {"category": validated["category"]}
@@ -843,7 +1000,9 @@ mcp_server = Server(
         "progression, and current Mythic+ context; get_character_equipment for equipped slots and Season 2 upgrade "
         "paths; get_character_talents for the current logged-out Armory build and import code; "
         "get_character_achievements for totals and recent completions; list_realms to discover realm slugs; and "
-        "get_season_rewards for curated Season 2 reward rules and deterministic activity suggestions. "
+        "get_season_rewards for curated season reward rules and deterministic activity suggestions; "
+        "get_class_guidance for recommended stats, talent builds, trinkets and best-in-slot lists; and "
+        "get_gear_audit to cross-reference equipped items against those recommendations. "
         "Character data comes from Blizzard; season reward rules are curated community data labelled "
         "provenance='curated'."
     ),
