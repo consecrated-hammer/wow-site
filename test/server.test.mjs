@@ -733,3 +733,33 @@ test('enforces that equipment can only ever be Blizzard-sourced', () => {
   const advice = { provenance: P.COMMUNITY, source: 'classcodex', recommendations: [{ itemId: 1 }] };
   assert.equal(assertGear(advice), advice);
 });
+
+test('decodes a real loadout string identically to the Wowhead-based decoder', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const { decodeLoadout, diffLoadouts } = await import('../lib/talent-decoder.mjs');
+  const tree = JSON.parse(await readFile(new URL('./fixtures/talent-tree-holy-paladin.json', import.meta.url), 'utf8'));
+  const code = (await readFile(new URL('./fixtures/bluehoof-loadout.txt', import.meta.url), 'utf8')).trim();
+
+  const decoded = decodeLoadout(code, tree);
+  assert.equal(decoded.className, 'Paladin');
+  assert.equal(decoded.specName, 'Holy');
+  assert.equal(decoded.specId, 65);
+  assert.equal(decoded.version, 2);
+
+  // The oracle: /mnt/docker/infra/scripts/wow_talent_decoder.js reports
+  // 30/30/13 for this exact string. Blizzard's profile reports 34/32/14 for
+  // the same character because it also counts granted nodes that the export
+  // string does not encode as purchased.
+  assert.deepEqual(decoded.counts, { class: 30, spec: 30, hero: 13 });
+  assert.ok(decoded.talents.hero.some((talent) => talent.name === 'Aurora'));
+  assert.ok(decoded.talents.hero.every((talent) => talent.spellId));
+
+  // Decoding against the wrong tree would produce plausible nonsense, so it
+  // must fail loudly instead.
+  assert.throws(() => decodeLoadout(code, { ...tree, specId: 66 }), /is for spec 65/);
+  assert.throws(() => decodeLoadout('not-base64!', tree), /Invalid character/);
+
+  const identical = diffLoadouts(decoded, decodeLoadout(code, tree));
+  assert.equal(identical.identical, true);
+  assert.deepEqual(identical.take, []);
+});
