@@ -789,3 +789,160 @@ test('flags a talent diff as incomparable when the point budgets differ', async 
   assert.match(diff.warning, /stale source/);
   assert.ok(diff.drop.length > 20, 'the raw difference is large, which is exactly why it needs the warning');
 });
+
+test('applies a different refresh rule per dataset and survives outages', async () => {
+  const { mkdtemp, rm } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { createReferenceData, POLICY } = await import('../lib/reference-data.mjs');
+
+  const cacheDir = await mkdtemp(join(tmpdir(), 'wow-ref-'));
+  let clock = Date.UTC(2026, 7, 17, 0, 0, 0);
+  let build = '12.1.0.69299';
+  let talentCalls = 0;
+  let etagSent = null;
+  let upstreamStatus = 200;
+
+  const payload = [{ specId: 65, className: 'Paladin', specName: 'Holy', fullNodeOrder: [1, 2, 3] }];
+  const fetchImpl = async (url, init = {}) => {
+    const target = String(url);
+    if (target.includes('wago.tools')) {
+      return { ok: true, json: async () => ({ wow: [{ version: build }] }) };
+    }
+    talentCalls += 1;
+    etagSent = init.headers?.['if-none-match'] ?? null;
+    if (upstreamStatus === 304) {
+      return { status: 304, ok: false, headers: { get: () => null } };
+    }
+    if (upstreamStatus !== 200) {
+      return { status: upstreamStatus, ok: false, headers: { get: () => null } };
+    }
+    return {
+      status: 200, ok: true,
+      headers: { get: (name) => (name === 'etag' ? '"abc123"' : null) },
+      json: async () => payload
+    };
+  };
+
+  try {
+    const reference = createReferenceData({ cacheDir, fetchImpl, now: () => clock });
+
+    const first = await reference.refreshTalentTrees();
+    assert.equal(first.outcome, 'updated');
+    assert.equal(talentCalls, 1);
+
+    // Same build, inside the backstop: no upstream call at all.
+    clock += 60_000;
+    const second = await reference.refreshTalentTrees();
+    assert.equal(second.outcome, 'skipped');
+    assert.equal(talentCalls, 1, 'must not re-request while fresh');
+
+    // A build change is a trigger even inside the backstop.
+    clock += 60_000;
+    build = '12.1.0.70000';
+    upstreamStatus = 304;
+    const onBuildChange = await reference.refreshTalentTrees();
+    assert.equal(onBuildChange.outcome, 'unchanged');
+    assert.match(onBuildChange.reason, /304/);
+    assert.match(onBuildChange.trigger, /build changed/);
+    assert.equal(etagSent, '"abc123"', 'revalidation must be conditional, not a full re-download');
+
+    // The hotfix case: build unchanged, but the backstop elapses, so we still
+    // revalidate. Without this, server-side tuning changes would be missed.
+    clock += 25 * 60 * 60 * 1000;
+    const beforeHotfixCheck = talentCalls;
+    const onBackstop = await reference.refreshTalentTrees();
+    assert.equal(talentCalls, beforeHotfixCheck + 1, 'backstop must revalidate even on an unchanged build');
+    assert.match(onBackstop.trigger, /hotfixes/, 'the backstop, not the build, is why we checked');
+
+    // Upstream failure degrades to the cached copy rather than to an error.
+    clock += 25 * 60 * 60 * 1000;
+    upstreamStatus = 503;
+    const outage = await reference.refreshTalentTrees();
+    assert.equal(outage.outcome, 'stale');
+    const { data } = await reference.get('talent-trees');
+    assert.equal(data[0].specId, 65, 'cached data still served during an outage');
+
+    // Manual and synced datasets are never auto-refreshed.
+    const rows = (await reference.status()).datasets;
+    const byId = Object.fromEntries(rows.map((row) => [row.id, row]));
+    assert.equal(byId['season-rules'].policy, POLICY.MANUAL);
+    assert.equal(byId['season-rules'].stale, true, 'absent manual data reports as stale for a human');
+    assert.equal(byId['classcodex'].policy, POLICY.SYNCED);
+    assert.equal(byId['talent-trees'].present, true);
+  } finally {
+    await rm(cacheDir, { recursive: true, force: true });
+  }
+});
+
+test('parses ClassCodex Lua tables without executing them', async () => {
+  const { parseLuaTable, extractAssignment } = await import('../lib/classcodex.mjs');
+
+  assert.deepEqual(parseLuaTable('{ a = 1, b = "two", c = true, d = nil }'),
+    { a: 1, b: 'two', c: true, d: null });
+  assert.deepEqual(parseLuaTable('{ 1, 2, 3 }'), [1, 2, 3]);
+  assert.deepEqual(parseLuaTable('{ ["holy"] = { label = "Holy Paladin" } }'),
+    { holy: { label: 'Holy Paladin' } });
+  // Nested, with a trailing comma and a comment, as the generated files have.
+  assert.deepEqual(
+    parseLuaTable('{ stats = { { "Mastery" }, { "Haste", "Critical Strike" } }, -- note\n }'),
+    { stats: [['Mastery'], ['Haste', 'Critical Strike']] }
+  );
+
+  const source = 'ClassCodexData = ClassCodexData or {}\nClassCodexData["PALADIN"] = { ["holy"] = { label = "Holy" } }';
+  const extracted = extractAssignment(source, 'ClassCodexData');
+  assert.equal(extracted.classToken, 'PALADIN');
+  assert.deepEqual(extracted.value, { holy: { label: 'Holy' } });
+  assert.equal(extractAssignment(source, 'NotPresent'), null);
+});
+
+test('audits equipment against guidance and labels each side', async () => {
+  const { auditGear } = await import('../lib/gear-audit.mjs');
+
+  const equipment = {
+    provenance: 'blizzard',
+    character: { name: 'Bluehoof' },
+    items: [
+      { slotName: 'Main Hand', itemId: 193710, name: 'Spellboon Saber', itemLevel: 298 },
+      { slotName: 'Legs', itemId: 249960, name: "Luminant Verdict's Greaves", itemLevel: 289 },
+      { slotName: 'Head', itemId: 999999, name: 'Unknown Helm', itemLevel: 289 }
+    ]
+  };
+  const guidance = {
+    addonVersion: '0.36.3',
+    lastScrape: '2026-07-02',
+    bisGear: {
+      archon: [{ label: 'Mythic+', slots: [
+        { item: { itemId: 193710, name: 'Spellboon Saber' }, bis: true },
+        { item: { itemId: 249960, name: "Luminant Verdict's Greaves" }, bis: false }
+      ] }]
+    },
+    trinkets: [
+      { itemId: 249343, tier: 'S', contexts: ['raid'], source: 'Chimaerus' },
+      { itemId: 264507, tier: 'C', contexts: ['delves'] }
+    ]
+  };
+
+  const audit = auditGear({ equipment, guidance });
+  assert.deepEqual(audit.summary, {
+    slotsEquipped: 3, slotsWithGuidance: 2, slotsAlreadyBis: 1, trinketUpgradesSuggested: 1
+  });
+
+  const weapon = audit.slots.find((slot) => slot.slot === 'Main Hand');
+  assert.equal(weapon.equipped.provenance, 'blizzard', 'what you have is authoritative');
+  assert.equal(weapon.recommendation.provenance, 'community', 'what you should have is opinion');
+  assert.equal(weapon.recommendation.source, 'classcodex');
+  assert.equal(weapon.recommendation.isBisSomewhere, true);
+
+  // Guidance silence is not criticism: an unlisted slot gets no recommendation.
+  assert.equal(audit.slots.find((slot) => slot.slot === 'Head').recommendation, null);
+  // Only S/A trinkets are suggested, and they name the boss that drops them.
+  assert.deepEqual(audit.trinketUpgrades.map((t) => t.droppedBy), ['Chimaerus']);
+  assert.match(audit.guidance.staleness, /2026-07-02/);
+
+  // The provider boundary is enforced, not assumed.
+  assert.throws(
+    () => auditGear({ equipment: { ...equipment, provenance: 'community' }, guidance }),
+    /requires Blizzard-sourced equipment/
+  );
+});
