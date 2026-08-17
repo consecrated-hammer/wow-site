@@ -3,7 +3,7 @@ import { readFile, stat } from 'node:fs/promises';
 import { extname, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { SEASON } from './site/season-data.js';
-import { SEASON_REWARDS, recommendActivities } from './site/season-rewards.js';
+import { resolveSeasonModule, seasonDataUnavailable } from './site/seasons/index.js';
 
 const SITE_ROOT = resolve(fileURLToPath(new URL('./site/', import.meta.url)));
 const PORT = positiveInteger(process.env.PORT, 80);
@@ -149,6 +149,8 @@ export function createCharacterService(options = {}) {
   const pending = new Map();
   const mediaPending = new Map();
   const realmPending = new Map();
+  const seasonCache = new Map();
+  const seasonPending = new Map();
   let token = null;
   let tokenExpiresAt = 0;
   let tokenPending = null;
@@ -473,6 +475,38 @@ export function createCharacterService(options = {}) {
     return request;
   }
 
+  /* Blizzard's own current Mythic Keystone season id, so nothing hardcodes a
+   * season. Cached for a day and coalesced, like the realm index.
+   *
+   * On failure this returns null rather than guessing a season: a wrong id
+   * would resolve to the wrong curated tables, which is worse than admitting
+   * we don't know. The caller turns null into seasonDataUnavailable. */
+  async function currentSeasonId(region = 'us') {
+    const cached = seasonCache.get(region);
+    if (cached && cached.expiresAt > now()) return cached.seasonId;
+    if (seasonPending.has(region)) return seasonPending.get(region);
+
+    const request = (async () => {
+      try {
+        const accessToken = await getToken();
+        const url = new URL(`https://${region}.api.blizzard.com/data/wow/mythic-keystone/season/index`);
+        url.searchParams.set('namespace', `dynamic-${region}`);
+        const payload = await fetchJson(url, { headers: { authorization: `Bearer ${accessToken}` } });
+        const seasonId = payload?.current_season?.id;
+        if (!Number.isInteger(seasonId)) throw new HttpError(502, 'upstream_error', 'Blizzard returned no current season.');
+        seasonCache.set(region, { seasonId, expiresAt: now() + realmTtlMs });
+        return seasonId;
+      } catch (error) {
+        if (cached) return cached.seasonId;
+        return null;
+      } finally {
+        seasonPending.delete(region);
+      }
+    })();
+    seasonPending.set(region, request);
+    return request;
+  }
+
   async function lookup({ region, realm, character, forceRefresh = false }) {
     return lookupCached('equipment', { region, realm, character, forceRefresh }, fetchCharacter);
   }
@@ -532,7 +566,7 @@ export function createCharacterService(options = {}) {
     return lookupCached('achievements', query, fetchAchievements);
   }
 
-  return { lookup, lookupTalents, lookupProfile, lookupAchievements, listRealms };
+  return { lookup, lookupTalents, lookupProfile, lookupAchievements, listRealms, currentSeasonId };
 }
 
 function decorate(data, fetchedAt, status, refreshCooldownMs, warning = null, refreshBaseAt = fetchedAt) {
@@ -609,30 +643,71 @@ function validateSeasonQuery(url) {
   if (category === 'recommended_activities' && itemLevel === null) {
     throw new HttpError(400, 'item_level_required', 'Recommended activities need an item level.');
   }
-  return { category, itemLevel };
+  const asOf = url.searchParams.get('asOf');
+  if (asOf !== null && !/^\d{4}-\d{2}-\d{2}$/.test(asOf)) {
+    throw new HttpError(400, 'invalid_as_of', 'asOf must be a YYYY-MM-DD date.');
+  }
+
+  let currencies = null;
+  const rawCurrencies = url.searchParams.get('currencies');
+  if (rawCurrencies) {
+    try {
+      currencies = JSON.parse(rawCurrencies);
+    } catch {
+      throw new HttpError(400, 'invalid_currencies', 'currencies must be a JSON object of crest balances.');
+    }
+    if (currencies === null || typeof currencies !== 'object' || Array.isArray(currencies)) {
+      throw new HttpError(400, 'invalid_currencies', 'currencies must be a JSON object of crest balances.');
+    }
+  }
+
+  return { category, itemLevel, asOf: asOf || undefined, currencies, seasonId: validateSeasonId(url) };
+}
+
+function validateSeasonId(url) {
+  const raw = url.searchParams.get('seasonId');
+  if (raw === null || raw === '') return null;
+  const seasonId = Number(raw);
+  if (!Number.isInteger(seasonId) || seasonId < 1) {
+    throw new HttpError(400, 'invalid_season', 'seasonId must be a positive whole number.');
+  }
+  return seasonId;
 }
 
 // Curated data only. The envelope repeats provenance/season/patch/verifiedAt on
 // every response so a consumer can never mistake it for Blizzard API output.
-export function seasonRewards({ category, itemLevel }) {
-  const { season, patch, verifiedAt, provenance, disclaimer, sources } = SEASON_REWARDS;
-  const envelope = { season, patch, verifiedAt, provenance, disclaimer, sources, category };
+//
+// The season module is resolved by id rather than imported directly, so a
+// season rollover surfaces as seasonDataUnavailable instead of quietly serving
+// the previous season's tables.
+export function seasonRewards({ category, itemLevel, asOf, currencies, seasonId }) {
+  const seasonModule = resolveSeasonModule(seasonId);
+  if (!seasonModule) return { ...seasonDataUnavailable(seasonId), category };
+
+  const rewards = seasonModule.rewards;
+  const { season, patch, verifiedAt, provenance, disclaimer, sources } = rewards;
+  const envelope = {
+    seasonId: rewards.seasonId, season, patch, verifiedAt, provenance, disclaimer, sources, category
+  };
+  const recommend = () => ({
+    recommendedActivities: seasonModule.recommendActivities(itemLevel, { asOf, currencies })
+  });
 
   const sections = {
-    delves: () => ({ delves: SEASON_REWARDS.delves }),
-    mythic_plus: () => ({ mythicPlus: SEASON_REWARDS.mythicPlus }),
-    crests: () => ({ crests: SEASON_REWARDS.crests }),
-    great_vault: () => ({ greatVault: SEASON_REWARDS.greatVault }),
-    raid: () => ({ raid: SEASON_REWARDS.raid, aboveTrack: SEASON_REWARDS.aboveTrack }),
-    currencies: () => ({ currencies: SEASON_REWARDS.currencies }),
-    recommended_activities: () => ({ recommendedActivities: recommendActivities(itemLevel) })
+    delves: () => ({ delves: rewards.delves }),
+    mythic_plus: () => ({ mythicPlus: rewards.mythicPlus }),
+    crests: () => ({ crests: rewards.crests }),
+    great_vault: () => ({ greatVault: rewards.greatVault }),
+    raid: () => ({ raid: rewards.raid, aboveTrack: rewards.aboveTrack, schedule: rewards.schedule }),
+    currencies: () => ({ currencies: rewards.currencies }),
+    recommended_activities: recommend
   };
 
   if (category === 'all') {
     const all = Object.assign({}, ...Object.keys(sections)
       .filter((key) => key !== 'recommended_activities')
       .map((key) => sections[key]()));
-    if (itemLevel !== null) all.recommendedActivities = recommendActivities(itemLevel);
+    if (itemLevel !== null) Object.assign(all, recommend());
     return { ...envelope, ...all };
   }
   return { ...envelope, ...sections[category]() };
@@ -706,7 +781,12 @@ export const API_ROUTES = new Map([
   ['/api/profile', (service, url) => service.lookupProfile(validateLookup(url))],
   ['/api/achievements', (service, url) => service.lookupAchievements(validateLookup(url))],
   ['/api/realms', (service, url) => service.listRealms(validateRegion(url))],
-  ['/api/season-rewards', (_service, url) => seasonRewards(validateSeasonQuery(url))]
+  ['/api/season-rewards', async (service, url) => {
+    const query = validateSeasonQuery(url);
+    // Resolve the live season unless the caller pinned one explicitly.
+    const seasonId = query.seasonId ?? await service.currentSeasonId();
+    return seasonRewards({ ...query, seasonId });
+  }]
 ]);
 
 export function createApp(options = {}) {

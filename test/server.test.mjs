@@ -12,6 +12,8 @@ import {
   normaliseRealm,
   resolveUpgrade
 } from '../server.mjs';
+import { PROVENANCE as P, assertGearProvenance as assertGear } from '../lib/providers.mjs';
+import { resolveSeasonModule } from '../site/seasons/index.js';
 
 function callApp(app, { method, url, address = '203.0.113.7' }) {
   return new Promise((resolve) => {
@@ -597,7 +599,7 @@ test('guards every API route against non-GET methods and rate limits', async () 
 test('labels every season reward response as curated, never Blizzard output', () => {
   for (const category of SEASON_REWARD_CATEGORIES) {
     const itemLevel = category === 'recommended_activities' ? 289 : null;
-    const result = seasonRewards({ category, itemLevel });
+    const result = seasonRewards({ category, itemLevel, seasonId: 18 });
     assert.equal(result.provenance, 'curated', `${category} must declare curated provenance`);
     assert.equal(result.season, 'Midnight Season 2');
     assert.equal(result.patch, '12.1');
@@ -608,7 +610,7 @@ test('labels every season reward response as curated, never Blizzard output', ()
 });
 
 test('reports unconfirmed crest quantities as null rather than guessing', () => {
-  const { mythicPlus } = seasonRewards({ category: 'mythic_plus', itemLevel: null });
+  const { mythicPlus } = seasonRewards({ category: 'mythic_plus', itemLevel: null, seasonId: 18 });
   assert.equal(mythicPlus.keys.length, 10);
   for (const entry of mythicPlus.keys) {
     assert.equal(entry.crestQuantity.amount, null, `${entry.key} must not invent a crest quantity`);
@@ -618,7 +620,7 @@ test('reports unconfirmed crest quantities as null rather than guessing', () => 
 });
 
 test('derives deterministic activity advice with the rule that selected it', () => {
-  const { recommendedActivities } = seasonRewards({ category: 'recommended_activities', itemLevel: 289 });
+  const { recommendedActivities } = seasonRewards({ category: 'recommended_activities', itemLevel: 289, seasonId: 18, asOf: '2026-09-30' });
   assert.equal(recommendedActivities.advisory, true);
   assert.equal(recommendedActivities.provenance, 'curated');
   assert.ok(recommendedActivities.suggestions.length > 0);
@@ -628,14 +630,14 @@ test('derives deterministic activity advice with the rule that selected it', () 
   }
   // Regression for the review finding: a well-geared character must still be
   // offered later raid bosses, not a false "nothing improves your gear".
-  const geared = seasonRewards({ category: 'recommended_activities', itemLevel: 330 });
+  const geared = seasonRewards({ category: 'recommended_activities', itemLevel: 330, seasonId: 18, asOf: '2026-09-30' });
   const raid = geared.recommendedActivities.suggestions.find((entry) => entry.source === 'raid');
   assert.ok(raid, 'ilvl 330 must still be offered the 344 raid band');
   assert.equal(raid.rewardItemLevel, 344);
   assert.match(raid.reason, /bosses 7-8/);
 
   // Only past the top of every listed reward is an empty answer correct.
-  const topped = seasonRewards({ category: 'recommended_activities', itemLevel: 999 });
+  const topped = seasonRewards({ category: 'recommended_activities', itemLevel: 999, seasonId: 18, asOf: '2026-09-30' });
   assert.deepEqual(topped.recommendedActivities.suggestions, []);
 });
 
@@ -652,4 +654,82 @@ test('rejects unknown categories and item levels at the query boundary', async (
   const fractional = await callApp(app, { method: 'GET', url: '/api/season-rewards?itemLevel=289.5' });
   assert.equal(fractional.status, 400);
   assert.equal(JSON.parse(fractional.body).error, 'invalid_item_level');
+});
+
+test('never serves a previous season\'s tables for an unknown season', () => {
+  // The failure this guards against is silent and confidently wrong: serving
+  // Season 2 Delve values into Season 3.
+  assert.equal(resolveSeasonModule(18)?.seasonId, 18);
+  assert.equal(resolveSeasonModule(19), null);
+
+  const unknown = seasonRewards({ category: 'all', itemLevel: null, seasonId: 19 });
+  assert.equal(unknown.seasonDataUnavailable, true);
+  assert.equal(unknown.seasonId, 19);
+  assert.deepEqual(unknown.knownSeasonIds, [18]);
+  assert.equal(unknown.delves, undefined, 'must not leak another season\'s tables');
+  assert.equal(unknown.mythicPlus, undefined);
+
+  const missing = seasonRewards({ category: 'all', itemLevel: null, seasonId: null });
+  assert.equal(missing.seasonDataUnavailable, true);
+});
+
+test('only recommends raid content that is actually open on the given date', () => {
+  const before = seasonRewards({ category: 'recommended_activities', itemLevel: 289, seasonId: 18, asOf: '2026-08-18' });
+  const beforeRaid = before.recommendedActivities.suggestions.find((s) => s.source === 'raid');
+  assert.equal(beforeRaid, undefined, 'nothing is open on 18 Aug');
+  assert.ok(before.recommendedActivities.lockedUntilOpen.length > 0, 'locked content is reported, not hidden');
+  assert.ok(before.recommendedActivities.lockedUntilOpen.every((e) => e.opensOn));
+
+  // 20 Aug: LFR Wing 1 and Normal/Heroic are open, Mythic is not. At ilvl 289
+  // the lowest beating reward is Normal (292), which is not wing-gated.
+  const after = seasonRewards({ category: 'recommended_activities', itemLevel: 289, seasonId: 18, asOf: '2026-08-20' });
+  const afterRaid = after.recommendedActivities.suggestions.find((s) => s.source === 'raid');
+  assert.ok(afterRaid, 'open content is offered once its date passes');
+  assert.match(afterRaid.activity, /^Normal/);
+
+  // At ilvl 270 the answer is LFR, which is wing-gated, so the wing state shows.
+  const lowGeared = seasonRewards({ category: 'recommended_activities', itemLevel: 270, seasonId: 18, asOf: '2026-08-20' });
+  const lfrPick = lowGeared.recommendedActivities.suggestions.find((s) => s.source === 'raid');
+  assert.match(lfrPick.activity, /^LFR/);
+  assert.match(lfrPick.reason, /Wing 1 open/);
+  assert.match(lfrPick.reason, /next opens 2026-08-26/);
+
+  const { raidAvailability } = resolveSeasonModule(18);
+  assert.equal(raidAvailability('Mythic', '2026-08-20').open, false);
+  assert.equal(raidAvailability('Mythic', '2026-08-26').open, true);
+  const lfr = raidAvailability('LFR', '2026-08-20');
+  assert.deepEqual(lfr.wings.open.map((w) => w.wing), [1]);
+  assert.deepEqual(lfr.wings.locked.map((w) => w.wing), [2, 3, 4]);
+  assert.deepEqual(lfr.wings.open[0].bosses, ["Nek'zali the Soulcoiler", 'The Twin Fangs']);
+});
+
+test('bounds crest spending by the weekly cap, not the balance', () => {
+  const { planCrestSpend } = resolveSeasonModule(18);
+
+  // Under the cap: spend what you have.
+  const small = planCrestSpend({ Champion: 60 }).crests[0];
+  assert.equal(small.ranksAffordableThisWeek, 3);
+  assert.equal(small.capLimited, false);
+
+  // Over the cap: the cap decides the week, not the balance.
+  const large = planCrestSpend({ Champion: 400 }).crests[0];
+  assert.equal(large.ranksAffordableThisWeek, 5, '100/week cap at 20 per rank');
+  assert.equal(large.capLimited, true);
+  assert.match(large.note, /waits for reset/);
+
+  assert.equal(planCrestSpend({ Champion: 400 }).provenance, 'user');
+  assert.throws(() => planCrestSpend({ Champion: -1 }), TypeError);
+  assert.throws(() => planCrestSpend({ Champion: 1.5 }), TypeError);
+});
+
+test('enforces that equipment can only ever be Blizzard-sourced', () => {
+  const gear = { provenance: P.BLIZZARD, items: [{ slot: 'HEAD', itemLevel: 292 }] };
+  assert.equal(assertGear(gear), gear);
+  assert.throws(
+    () => assertGear({ provenance: P.COMMUNITY, source: 'classcodex', items: [{ slot: 'HEAD', itemLevel: 292 }] }),
+    /Equipment must be provenance 'blizzard'/
+  );
+  // Recommendations about gear are not gear and are checked by their own provenance.
+  const advice = { provenance: P.COMMUNITY, source: 'classcodex', recommendations: [{ itemId: 1 }] };
+  assert.equal(assertGear(advice), advice);
 });

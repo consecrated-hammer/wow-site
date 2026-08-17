@@ -20,11 +20,39 @@ const UNCONFIRMED_CREST_QUANTITY = Object.freeze({
   note: 'Per-run crest quantities are not confirmed in public sources for 12.1. Plan around crest type, not totals.'
 });
 
+export const SEASON_ID = 18;
+
 export const SEASON_REWARDS = Object.freeze({
+  seasonId: SEASON_ID,
   season: 'Midnight Season 2',
   patch: '12.1',
   verifiedAt: '2026-08-17',
   provenance: 'curated',
+
+  /* Content is not all open at once. Without this the planner recommends raid
+   * difficulties whose bosses are still locked. `opens` is the first day the
+   * content is available; null fields are not yet confirmed. */
+  schedule: Object.freeze({
+    seasonStart: '2026-08-18',
+    raid: Object.freeze({
+      name: 'The Venomous Abyss',
+      difficulties: Object.freeze([
+        {
+          difficulty: 'LFR',
+          wings: Object.freeze([
+            { wing: 1, name: 'The Soulcoilers', opens: '2026-08-19', bosses: Object.freeze(["Nek'zali the Soulcoiler", 'The Twin Fangs']) },
+            { wing: 2, name: null, opens: '2026-08-26', bosses: null },
+            { wing: 3, name: null, opens: '2026-09-02', bosses: null },
+            { wing: 4, name: null, opens: '2026-09-09', bosses: null }
+          ])
+        },
+        { difficulty: 'Normal', opens: '2026-08-19', wings: null },
+        { difficulty: 'Heroic', opens: '2026-08-19', wings: null },
+        { difficulty: 'Mythic', opens: '2026-08-26', wings: null }
+      ])
+    })
+  }),
+
   disclaimer:
     'Curated community data, not Blizzard Profile API output. Item levels reflect the post-July-8 increase. '
     + 'Crest quantities per run are unconfirmed and are reported as null.',
@@ -136,16 +164,49 @@ export const SEASON_REWARDS = Object.freeze({
   ])
 });
 
+/** Raid difficulty availability on a given date, from the schedule block. */
+export function raidAvailability(difficulty, asOf) {
+  const entry = SEASON_REWARDS.schedule.raid.difficulties
+    .find((candidate) => candidate.difficulty === difficulty);
+  if (!entry) return { open: false, opens: null, wings: null };
+
+  if (!entry.wings) {
+    return { open: entry.opens <= asOf, opens: entry.opens, wings: null };
+  }
+  const openWings = entry.wings.filter((wing) => wing.opens <= asOf);
+  const nextWing = entry.wings.find((wing) => wing.opens > asOf) || null;
+  return {
+    open: openWings.length > 0,
+    opens: entry.wings[0].opens,
+    wings: {
+      open: openWings.map((wing) => ({ wing: wing.wing, name: wing.name, bosses: wing.bosses })),
+      locked: entry.wings.filter((wing) => wing.opens > asOf)
+        .map((wing) => ({ wing: wing.wing, opens: wing.opens })),
+      nextOpens: nextWing ? nextWing.opens : null
+    }
+  };
+}
+
 /* Deterministic advice derived from the table above plus a supplied item
  * level. Every suggestion carries the rule that selected it. This is advice,
  * not a Blizzard fact and not a simulation: no BiS ranking, no drop-chance
- * claim, no throughput estimate. */
-export function recommendActivities(itemLevel, goal = 'any') {
+ * claim, no throughput estimate.
+ *
+ * `asOf` (YYYY-MM-DD) gates recommendations to content that is actually open;
+ * anything still locked is reported separately with its unlock date rather than
+ * silently dropped. `currencies` is optional, user-supplied, and never
+ * persisted. */
+export function recommendActivities(itemLevel, options = {}) {
+  const { goal = 'any', asOf = new Date().toISOString().slice(0, 10), currencies = null } = options;
   if (!Number.isInteger(itemLevel) || itemLevel < 1 || itemLevel > 1000) {
     throw new TypeError('itemLevel must be an integer between 1 and 1000');
   }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(asOf)) {
+    throw new TypeError('asOf must be a YYYY-MM-DD date');
+  }
 
   const suggestions = [];
+  const locked = [];
   const add = (activity, source, reward, reason) => suggestions.push({ activity, source, rewardItemLevel: reward, reason });
 
   for (const entry of SEASON_REWARDS.mythicPlus.keys) {
@@ -176,11 +237,34 @@ export function recommendActivities(itemLevel, goal = 'any') {
   const raidRewards = SEASON_REWARDS.raid.bands.flatMap((band) =>
     RAID_BANDS
       .filter(([key]) => band[key]?.itemLevel > itemLevel)
-      .map(([key, label]) => ({ difficulty: band.difficulty, label, itemLevel: band[key].itemLevel })));
-  const bestRaid = raidRewards.sort((a, b) => a.itemLevel - b.itemLevel)[0];
+      .map(([key, label]) => ({ difficulty: band.difficulty, label, itemLevel: band[key].itemLevel })))
+    .sort((a, b) => a.itemLevel - b.itemLevel);
+
+  // Take the lowest reward that beats the player *and* is open on asOf. A
+  // closed difficulty is reported as locked rather than silently skipped, so
+  // the answer explains itself instead of looking like there is nothing to do.
+  const bestRaid = raidRewards.find((reward) => raidAvailability(reward.difficulty, asOf).open);
   if (bestRaid) {
+    const availability = raidAvailability(bestRaid.difficulty, asOf);
+    const wings = availability.wings;
+    const wingNote = wings
+      ? ` Wing${wings.open.length === 1 ? '' : 's'} ${wings.open.map((w) => w.wing).join(', ')} open`
+        + (wings.nextOpens ? `; next opens ${wings.nextOpens}.` : '.')
+      : '';
     add(`${bestRaid.difficulty} ${SEASON_REWARDS.raid.name}`, 'raid', bestRaid.itemLevel,
-      `${bestRaid.label} at ${bestRaid.itemLevel} beats your ${itemLevel}.`);
+      `${bestRaid.label} at ${bestRaid.itemLevel} beats your ${itemLevel}.${wingNote}`);
+  }
+  for (const reward of raidRewards) {
+    const availability = raidAvailability(reward.difficulty, asOf);
+    if (availability.open) continue;
+    if (locked.some((entry) => entry.activity.startsWith(reward.difficulty))) continue;
+    locked.push({
+      activity: `${reward.difficulty} ${SEASON_REWARDS.raid.name}`,
+      source: 'raid',
+      rewardItemLevel: reward.itemLevel,
+      opensOn: availability.opens,
+      reason: `Would beat your ${itemLevel}, but opens ${availability.opens}.`
+    });
   }
 
   const bestVault = SEASON_REWARDS.mythicPlus.keys
@@ -195,11 +279,59 @@ export function recommendActivities(itemLevel, goal = 'any') {
   return {
     itemLevel,
     goal,
+    asOf,
     provenance: 'curated',
     advisory: true,
     note: filtered.length
       ? 'Deterministic suggestions from the curated reward table. Not a simulation or BiS ranking.'
-      : 'No listed activity rewards a higher item level than the one supplied.',
-    suggestions: filtered
+      : locked.length
+        ? 'Everything that would improve your gear is still locked; see lockedUntilOpen.'
+        : 'No listed activity rewards a higher item level than the one supplied.',
+    suggestions: filtered,
+    lockedUntilOpen: locked,
+    crestBudget: currencies ? planCrestSpend(currencies) : null
+  };
+}
+
+/**
+ * What a set of crest balances buys, bounded by the weekly cap.
+ *
+ * The cap is the point: a big balance does not mean a big week. Spending is
+ * limited to `weeklyCapPerType` per crest type, so this reports what fits now
+ * and what has to wait for reset. Balances are user-supplied, never verified
+ * against Blizzard (no public currency endpoint exists), and never persisted.
+ */
+export function planCrestSpend(currencies) {
+  const { costPerRank, weeklyCapPerType, types } = SEASON_REWARDS.crests;
+  const entries = [];
+
+  for (const type of types) {
+    const balance = currencies[type];
+    if (balance === undefined || balance === null) continue;
+    if (!Number.isInteger(balance) || balance < 0) {
+      throw new TypeError(`${type} balance must be a non-negative whole number`);
+    }
+    const spendableThisWeek = Math.min(balance, weeklyCapPerType);
+    const ranksThisWeek = Math.floor(spendableThisWeek / costPerRank);
+    const heldBack = balance - ranksThisWeek * costPerRank;
+    entries.push({
+      crest: type,
+      balance,
+      weeklyCap: weeklyCapPerType,
+      costPerRank,
+      ranksAffordableThisWeek: ranksThisWeek,
+      remainingAfterSpend: heldBack,
+      capLimited: balance > weeklyCapPerType,
+      note: balance > weeklyCapPerType
+        ? `Balance exceeds the ${weeklyCapPerType}/week cap; ${balance - weeklyCapPerType} waits for reset.`
+        : `Under the ${weeklyCapPerType}/week cap.`
+    });
+  }
+
+  return {
+    provenance: 'user',
+    advisory: true,
+    note: 'Balances are as supplied. Blizzard publishes no character currency endpoint, so these are not verified.',
+    crests: entries
   };
 }
