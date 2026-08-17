@@ -746,11 +746,16 @@ test('decodes a real loadout string identically to the Wowhead-based decoder', a
   assert.equal(decoded.specId, 65);
   assert.equal(decoded.version, 2);
 
-  // The oracle: /mnt/docker/infra/scripts/wow_talent_decoder.js reports
-  // 30/30/13 for this exact string. Blizzard's profile reports 34/32/14 for
-  // the same character because it also counts granted nodes that the export
-  // string does not encode as purchased.
+  // Ground truth from Wowhead's calculator for this exact string:
+  // Paladin "Spent: 34/34", Hero "Spent: 13/13", Holy "Spent: 34/34".
+  // Wowhead counts POINTS; the node count is lower wherever a node is
+  // multi-rank, so both numbers are asserted to keep them from drifting.
+  assert.deepEqual(decoded.pointsSpent, { class: 34, spec: 34, hero: 13 });
   assert.deepEqual(decoded.counts, { class: 30, spec: 30, hero: 13 });
+  // The original Wowhead-based decoder reports the same 30/30/13 nodes.
+  const multiRank = [...decoded.talents.class, ...decoded.talents.spec].filter((t) => t.rank > 1);
+  assert.equal(multiRank.length, 6, 'six multi-rank nodes account for the 8 extra points');
+  assert.ok(multiRank.some((t) => t.name === 'Beacon of the Savior' && t.rank === 4));
   assert.ok(decoded.talents.hero.some((talent) => talent.name === 'Aurora'));
   assert.ok(decoded.talents.hero.every((talent) => talent.spellId));
 
@@ -761,5 +766,26 @@ test('decodes a real loadout string identically to the Wowhead-based decoder', a
 
   const identical = diffLoadouts(decoded, decodeLoadout(code, tree));
   assert.equal(identical.identical, true);
+  assert.equal(identical.comparable, true);
+  assert.equal(identical.warning, null);
   assert.deepEqual(identical.take, []);
+});
+
+test('flags a talent diff as incomparable when the point budgets differ', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const { decodeLoadout, diffLoadouts } = await import('../lib/talent-decoder.mjs');
+  const tree = JSON.parse(await readFile(new URL('./fixtures/talent-tree-holy-paladin.json', import.meta.url), 'utf8'));
+  const mine = decodeLoadout((await readFile(new URL('./fixtures/bluehoof-loadout.txt', import.meta.url), 'utf8')).trim(), tree);
+
+  // ClassCodex's Season 1 Mythic+ build spends 59 points against this build's
+  // 81. Diffing them yields a long "drop" list that is budget, not advice.
+  const stale = decodeLoadout(
+    'CEEAAAAAAAAAAAAAAAAAAAAAAAAAAYBAMDAwglxMzMzYmZWgxwyYbmZxMNxwYmZYY2yAwAwGYjlZmZWmtZmZrBAAAYhNMDbGYGzAAAmZYGjRD',
+    tree
+  );
+  const diff = diffLoadouts(mine, stale);
+  assert.equal(diff.comparable, false);
+  assert.match(diff.warning, /different totals/);
+  assert.match(diff.warning, /stale source/);
+  assert.ok(diff.drop.length > 20, 'the raw difference is large, which is exactly why it needs the warning');
 });
