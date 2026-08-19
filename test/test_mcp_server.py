@@ -41,7 +41,7 @@ class WowMcpTests(unittest.TestCase):
         self.assertEqual({tool.name for tool in modern_tools}, set(server.TOOLS))
         self.assertEqual({tool.name for tool in legacy_tools}, set(server.TOOLS))
 
-    def test_tools_have_agent_friendly_read_only_contracts(self) -> None:
+    def test_tools_have_agent_friendly_and_accurate_contracts(self) -> None:
         for tool in server.TOOLS.values():
             with self.subTest(tool=tool.name):
                 self.assertTrue(tool.title)
@@ -50,10 +50,11 @@ class WowMcpTests(unittest.TestCase):
                 Draft202012Validator.check_schema(tool.input_schema)
                 Draft202012Validator.check_schema(tool.output_schema)
                 annotations = tool.annotations.model_dump(by_alias=True, exclude_none=True)
-                self.assertTrue(annotations["readOnlyHint"])
+                self.assertEqual(annotations["readOnlyHint"], tool.name not in {
+                    "achievement_character_upsert", "achievement_refresh_character", "achievement_set_priority", "achievement_update_state", "achievement_set_curated_metadata"
+                })
                 self.assertFalse(annotations["destructiveHint"])
-                self.assertTrue(annotations["idempotentHint"])
-                self.assertTrue(annotations["openWorldHint"])
+                self.assertEqual(annotations["idempotentHint"], annotations["readOnlyHint"])
 
     def test_character_result_is_structured_and_audited(self) -> None:
         metadata = {

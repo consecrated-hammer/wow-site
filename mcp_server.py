@@ -1,4 +1,5 @@
 import json
+import hashlib
 import re
 import logging
 import os
@@ -19,6 +20,7 @@ from mcp.server.lowlevel.server import Server, ServerRequestContext
 from starlette.requests import Request
 from starlette.responses import JSONResponse, PlainTextResponse, Response
 from starlette.routing import Route
+from achievement_tracker import AchievementTracker
 
 
 LOGGER = logging.getLogger("uvicorn.error")
@@ -26,6 +28,8 @@ HOST = os.environ.get("WOW_MCP_HOST", "0.0.0.0")
 PORT = int(os.environ.get("WOW_MCP_PORT", "8767"))
 UPSTREAM_URL = os.environ.get("WOW_MCP_UPSTREAM_URL", "http://wow-site").rstrip("/")
 AUDIT_LOG_PATH = Path(os.environ.get("WOW_MCP_AUDIT_LOG_PATH", "/data/queries.jsonl"))
+TRACKER_DB_PATH = Path(os.environ.get("WOW_MCP_TRACKER_DB_PATH", "/data/achievement_tracker.sqlite3"))
+TRACKER = AchievementTracker(TRACKER_DB_PATH)
 UPSTREAM_TIMEOUT_SECONDS = max(float(os.environ.get("WOW_MCP_UPSTREAM_TIMEOUT_SECONDS", "15")), 1.0)
 MAX_REQUEST_BYTES = max(int(os.environ.get("WOW_MCP_MAX_REQUEST_BYTES", "1048576")), 1)
 AUDIT_LOCK = threading.Lock()
@@ -911,6 +915,24 @@ TOOLS = {
     for tool in (CHARACTER_TOOL, TALENTS_TOOL, PROFILE_TOOL, ACHIEVEMENTS_TOOL, REALMS_TOOL, SEASON_REWARDS_TOOL, GUIDANCE_TOOL, GEAR_AUDIT_TOOL, MYTHIC_PLANNER_TOOL, VAULT_TOOL, RAID_PROGRESS_TOOL, META_BUILDS_TOOL)
 }
 
+TRACKER_OUTPUT_SCHEMA: dict[str, Any] = {"$schema":"https://json-schema.org/draft/2020-12/schema", "type":"object", "additionalProperties": True}
+
+def _tracker_tool(name: str, title: str, description: str, properties: dict[str, Any], required: list[str], *, read_only: bool) -> types.Tool:
+    return types.Tool(name=name, title=title, description=description, inputSchema={"type":"object", "properties":properties, "required":required, "additionalProperties":False}, outputSchema=TRACKER_OUTPUT_SCHEMA, annotations=types.ToolAnnotations(title=title, readOnlyHint=read_only, destructiveHint=False, idempotentHint=read_only, openWorldHint=False))
+
+TRACKER_TOOLS = (
+    _tracker_tool("achievement_character_upsert", "Add or Update a Tracked Character", "Creates or updates a character selected for the persistent achievement tracker. This changes local tracker state only; it does not claim Blizzard completion data.", {"region":{"type":"string","enum":["us","eu","kr","tw","US","EU","KR","TW"]},"realm":{"type":"string","minLength":1,"maxLength":80},"name":{"type":"string","minLength":1,"maxLength":24},"realmSlug":{"type":"string"}}, ["region","realm","name"], read_only=False),
+    _tracker_tool("achievement_character_list", "List Tracked Characters", "Lists all characters stored in the shared tracker, including their stable tracker identifiers. Use an explicit characterId for every character-specific tracker operation.", {}, [], read_only=True),
+    _tracker_tool("achievement_refresh_character", "Refresh Recent Blizzard Achievement Completions", "Fetches the selected character's current Blizzard achievement summary and records only explicit recent completion events as earned. It does not infer older completion state, criteria progress, or availability from totals.", {"characterId":{"type":"integer","minimum":1},"refresh":{"type":"boolean","description":"Ask the upstream cache to revalidate when its refresh cooldown permits."}}, ["characterId"], read_only=False),
+    _tracker_tool("achievement_set_priority", "Set Achievement Priority", "Sets a per-character manual priority from -100 through 100. Higher values sort first in the priority queue and are explicitly reflected in planner explanations.", {"characterId":{"type":"integer","minimum":1},"achievementId":{"type":"integer","minimum":1},"priority":{"type":"integer","minimum":-100,"maximum":100}}, ["characterId","achievementId","priority"], read_only=False),
+    _tracker_tool("achievement_update_state", "Update Achievement State", "Records user-confirmed progress, readiness, or earned state. Earned is accepted only from manual_confirmation or Blizzard data; progress never silently becomes earned.", {"characterId":{"type":"integer","minimum":1},"achievementId":{"type":"integer","minimum":1},"state":{"type":"string","enum":["unknown","in_progress","completion_ready","earned"]},"source":{"type":"string","enum":["manual","manual_confirmation","blizzard"]},"earnedAt":{"type":"string","format":"date-time"},"progressCurrent":{"type":"integer","minimum":0},"progressTarget":{"type":"integer","minimum":1},"note":{"type":"string","maxLength":2000}}, ["characterId","achievementId","state"], read_only=False),
+    _tracker_tool("achievement_set_curated_metadata", "Store Verified Curated Achievement Metadata", "Stores agent-researched, verified guidance with required source provenance and verification time. This does not browse, scrape, or invent claims at runtime; expired guidance is excluded from plans.", {"achievementId":{"type":"integer","minimum":1},"name":{"type":"string","minLength":1,"maxLength":200},"whatToDo":{"type":"string","maxLength":4000},"fastestPathTip":{"type":"string","maxLength":4000},"estimatedMinutes":{"type":"integer","minimum":0},"difficulty":{"type":"string","maxLength":80},"groupRequirement":{"type":"string","maxLength":120},"availability":{"type":"string","maxLength":120},"availabilityReason":{"type":"string","maxLength":1000},"nextAvailableAt":{"type":"string","format":"date-time"},"deadline":{"type":"string","format":"date-time"},"deadlineReason":{"type":"string","maxLength":1000},"zone":{"type":"string","maxLength":120},"expansion":{"type":"string","maxLength":120},"season":{"type":"string","maxLength":120},"event":{"type":"string","maxLength":120},"reward":{"type":"string","maxLength":1000},"sourceName":{"type":"string","minLength":1,"maxLength":200},"sourceUrl":{"type":"string","format":"uri","maxLength":2000},"verifiedAt":{"type":"string","format":"date-time"},"expiresAt":{"type":"string","format":"date-time"}}, ["achievementId","sourceName","sourceUrl","verifiedAt"], read_only=False),
+    _tracker_tool("achievement_list", "List Achievement Work Queue", "Returns a character's persistent achievement work queue. Order may be priority, new (recently catalogued), expiring (future curated deadlines), or updated; state and provenance fields are returned for each row.", {"characterId":{"type":"integer","minimum":1},"order":{"type":"string","enum":["priority","new","expiring","updated"]},"state":{"type":"string","enum":["unknown","in_progress","completion_ready","earned"]},"onlyUnexpired":{"type":"boolean"},"limit":{"type":"integer","minimum":1,"maximum":250}}, ["characterId"], read_only=True),
+    _tracker_tool("achievement_dashboard", "Get Achievement Dashboard", "Returns state counts for one or more selected tracker characters. This is a read-only aggregate suitable for a concise current-progress briefing.", {"characterIds":{"type":"array","items":{"type":"integer","minimum":1},"minItems":1,"maxItems":50,"uniqueItems":True}}, ["characterIds"], read_only=True),
+    _tracker_tool("achievement_build_session_plan", "Build Shared Achievement Session Plan", "Builds an explainable shared session queue across selected characters. It boosts manual priority, verified deadlines, and activities needed by multiple selected characters; it never assumes undocumented completion.", {"characterIds":{"type":"array","items":{"type":"integer","minimum":1},"minItems":1,"maxItems":50,"uniqueItems":True},"limit":{"type":"integer","minimum":1,"maximum":100}}, ["characterIds"], read_only=True),
+)
+TOOLS.update({tool.name: tool for tool in TRACKER_TOOLS})
+
 
 def _request_metadata(context: ServerRequestContext[Any, Request]) -> dict[str, Any]:
     request = context.request
@@ -921,13 +943,18 @@ def _request_metadata(context: ServerRequestContext[Any, Request]) -> dict[str, 
     session = getattr(context, "session", None)
     client_params = getattr(session, "client_params", None)
     client_info = client_params.client_info if client_params is not None else None
-    return {
+    subject = str(headers.get("x-auth-request-sub") or "").strip()
+    metadata = {
         "callerAddress": caller_address,
         "userAgent": str(headers.get("user-agent") or "")[:300] or None,
         "clientName": client_info.name if client_info is not None else None,
         "clientVersion": client_info.version if client_info is not None else None,
         "protocolVersion": context.protocol_version,
     }
+    # Persist a non-reversible actor correlation id, never a raw OAuth subject.
+    if subject:
+        metadata["actor"] = hashlib.sha256(subject.encode("utf-8")).hexdigest()[:24]
+    return metadata
 
 
 def _write_audit(record: dict[str, Any]) -> None:
@@ -1098,6 +1125,35 @@ def _invoke_tool(
     cache_status: str | None = None
     error_code: str | None = None
     try:
+        if name in {tool.name for tool in TRACKER_TOOLS}:
+            actor = metadata.get("actor")
+            if name == "achievement_character_upsert":
+                value = dict(arguments)
+                value["region"] = str(value.get("region") or "").lower()
+                if value["region"] not in REGIONS or not isinstance(value.get("realm"), str) or not isinstance(value.get("name"), str):
+                    raise ValueError("region, realm and name must be valid character values")
+                result = TRACKER.add_character(value, actor)
+            elif name == "achievement_character_list": result = TRACKER.list_characters()
+            elif name == "achievement_refresh_character":
+                identity = TRACKER.character_identity(int(arguments["characterId"]))
+                query = {"region": identity["region"], "realm": identity["realm"], "name": identity["name"]}
+                if arguments.get("refresh", False): query["refresh"] = "1"
+                payload, http_status, retry_after = _upstream_query("/api/achievements", query, metadata.get("callerAddress"))
+                if http_status != 200:
+                    result = {"error": str(payload.get("error") or "upstream_error"), "message": str(payload.get("message") or "Blizzard achievement refresh failed."), "httpStatus": http_status}
+                    if retry_after: result["retryAfterSeconds"] = int(retry_after) if retry_after.isdigit() else retry_after
+                    error_code = result["error"]
+                    return result, True
+                result = TRACKER.record_blizzard_recent(int(arguments["characterId"]), payload.get("recentAchievements") or [], actor)
+            elif name == "achievement_set_priority":
+                result = TRACKER.set_priority(int(arguments["characterId"]), int(arguments["achievementId"]), int(arguments["priority"]), actor)
+            elif name == "achievement_update_state": result = TRACKER.update_state(arguments, actor)
+            elif name == "achievement_set_curated_metadata": result = TRACKER.curate(arguments, actor)
+            elif name == "achievement_list": result = TRACKER.list_achievements(arguments)
+            elif name == "achievement_dashboard": result = TRACKER.dashboard(arguments["characterIds"])
+            else: result = TRACKER.plan(arguments["characterIds"], int(arguments.get("limit", 20)))
+            outcome = "success"
+            return result, False
         if name in character_tools:
             validated = _validate_character_arguments(arguments)
             query = {
@@ -1204,6 +1260,7 @@ async def _lifespan(_server: Server):
     with AUDIT_LOG_PATH.open("a", encoding="utf-8"):
         pass
     AUDIT_LOG_PATH.chmod(0o640)
+    TRACKER.initialise()
     yield None
 
 
