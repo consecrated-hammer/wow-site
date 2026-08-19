@@ -37,3 +37,12 @@ class AchievementTrackerTests(unittest.TestCase):
             duplicate = tracker.add_character({'region':'us','realm':"Dath'Remar",'realmSlug':'dathremar','name':'reilly'}, None)
             self.assertEqual(original['id'], duplicate['id'])
             self.assertEqual(tracker.character_identity(original['id'])['realm'], 'dathremar')
+
+    def test_blizzard_returned_without_timestamp_becomes_unearned_not_unknown(self):
+        with tempfile.TemporaryDirectory() as directory:
+            tracker = AchievementTracker(Path(directory) / 'tracker.sqlite3'); tracker.initialise()
+            character = tracker.add_character({'region':'us','realm':'Dath-Remar','name':'One'}, None)['id']
+            tracker.set_priority(character, 42, 10, None)
+            result = tracker.record_blizzard_unearned(character, [42], 'blizzard')
+            self.assertEqual(result['recordedUnearned'], 1)
+            self.assertEqual(tracker.list_achievements({'characterId':character, 'state':'unearned'})['achievements'][0]['achievementId'], 42)

@@ -47,7 +47,7 @@ class AchievementTracker:
               CREATE TABLE IF NOT EXISTS character_achievements (
                 character_id INTEGER NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
                 achievement_id INTEGER NOT NULL REFERENCES achievements(achievement_id) ON DELETE CASCADE,
-                state TEXT NOT NULL DEFAULT 'unknown' CHECK(state IN ('unknown','in_progress','completion_ready','earned')),
+                state TEXT NOT NULL DEFAULT 'unknown' CHECK(state IN ('unknown','unearned','in_progress','completion_ready','earned')),
                 earned_at TEXT, progress_current INTEGER, progress_target INTEGER,
                 priority INTEGER NOT NULL DEFAULT 0 CHECK(priority BETWEEN -100 AND 100),
                 note TEXT, source TEXT NOT NULL DEFAULT 'manual', updated_at TEXT NOT NULL,
@@ -74,6 +74,26 @@ class AchievementTracker:
               CREATE INDEX IF NOT EXISTS ca_priority ON character_achievements(character_id, priority DESC);
               CREATE INDEX IF NOT EXISTS cm_deadline ON curated_metadata(deadline);
             """)
+            # SQLite cannot alter a CHECK constraint. Rebuild this one table
+            # once so an old tracker can distinguish confirmed-unearned from
+            # unavailable/unknown without losing any existing state.
+            if db.execute("PRAGMA user_version").fetchone()[0] < 1:
+                db.executescript("""
+                  ALTER TABLE character_achievements RENAME TO character_achievements_before_unearned;
+                  CREATE TABLE character_achievements (
+                    character_id INTEGER NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+                    achievement_id INTEGER NOT NULL REFERENCES achievements(achievement_id) ON DELETE CASCADE,
+                    state TEXT NOT NULL DEFAULT 'unknown' CHECK(state IN ('unknown','unearned','in_progress','completion_ready','earned')),
+                    earned_at TEXT, progress_current INTEGER, progress_target INTEGER,
+                    priority INTEGER NOT NULL DEFAULT 0 CHECK(priority BETWEEN -100 AND 100),
+                    note TEXT, source TEXT NOT NULL DEFAULT 'manual', updated_at TEXT NOT NULL,
+                    PRIMARY KEY(character_id, achievement_id)
+                  );
+                  INSERT INTO character_achievements SELECT * FROM character_achievements_before_unearned;
+                  DROP TABLE character_achievements_before_unearned;
+                  CREATE INDEX IF NOT EXISTS ca_priority ON character_achievements(character_id, priority DESC);
+                  PRAGMA user_version=1;
+                """)
             columns = {row[1] for row in db.execute("PRAGMA table_info(characters)")}
             if "realm_key" not in columns:
                 db.execute("ALTER TABLE characters ADD COLUMN realm_key TEXT")
@@ -130,6 +150,24 @@ class AchievementTracker:
                 recorded += 1
             self._event(db, actor, "achievement_refresh_blizzard_recent", character_id, None, {"recorded": recorded})
         return {"characterId": character_id, "recordedRecentEarned": recorded, "scope": "recent_events_only"}
+
+    def record_blizzard_unearned(self, character_id: int, achievement_ids: list[int], actor: str | None) -> dict[str, Any]:
+        """Mark only returned, no-timestamp achievements as unearned.
+
+        IDs absent from the profile are intentionally not touched: the public
+        inspection response does not make absence authoritative.
+        """
+        stamp = now(); recorded = 0
+        with self._connect() as db:
+            self._character(db, character_id)
+            for achievement_id in set(achievement_ids):
+                row = db.execute("SELECT state FROM character_achievements WHERE character_id=? AND achievement_id=?", (character_id, achievement_id)).fetchone()
+                if not row or row["state"] == "earned":
+                    continue
+                db.execute("UPDATE character_achievements SET state='unearned', source='blizzard', updated_at=? WHERE character_id=? AND achievement_id=?", (stamp, character_id, achievement_id))
+                recorded += 1
+            self._event(db, actor, "achievement_reconcile_blizzard_unearned", character_id, None, {"recorded": recorded})
+        return {"characterId": character_id, "recordedUnearned": recorded, "scope": "returned_without_completion_timestamp"}
 
     def set_priority(self, character_id: int, achievement_id: int, priority: int, actor: str | None) -> dict[str, Any]:
         with self._connect() as db:
