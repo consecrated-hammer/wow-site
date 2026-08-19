@@ -29,3 +29,11 @@ class AchievementTrackerTests(unittest.TestCase):
             character = tracker.add_character({'region':'us','realm':'DathRemar','name':'One'}, None)['id']
             with self.assertRaisesRegex(ValueError, 'earned requires'):
                 tracker.update_state({'characterId':character,'achievementId':1,'state':'earned'}, None)
+
+    def test_realm_display_variants_share_one_character_and_refresh_uses_slug(self):
+        with tempfile.TemporaryDirectory() as directory:
+            tracker = AchievementTracker(Path(directory) / 'tracker.sqlite3'); tracker.initialise()
+            original = tracker.add_character({'region':'us','realm':'Dath-Remar','realmSlug':'dathremar','name':'Reilly'}, None)
+            duplicate = tracker.add_character({'region':'us','realm':"Dath'Remar",'realmSlug':'dathremar','name':'reilly'}, None)
+            self.assertEqual(original['id'], duplicate['id'])
+            self.assertEqual(tracker.character_identity(original['id'])['realm'], 'dathremar')

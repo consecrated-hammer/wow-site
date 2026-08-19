@@ -6,6 +6,7 @@ agent-supplied research, never an inferred or scraped runtime value.
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
@@ -73,6 +74,16 @@ class AchievementTracker:
               CREATE INDEX IF NOT EXISTS ca_priority ON character_achievements(character_id, priority DESC);
               CREATE INDEX IF NOT EXISTS cm_deadline ON curated_metadata(deadline);
             """)
+            columns = {row[1] for row in db.execute("PRAGMA table_info(characters)")}
+            if "realm_key" not in columns:
+                db.execute("ALTER TABLE characters ADD COLUMN realm_key TEXT")
+            for row in db.execute("SELECT id, realm, realm_slug FROM characters WHERE realm_key IS NULL OR realm_key='' ").fetchall():
+                db.execute("UPDATE characters SET realm_key=? WHERE id=?", (self._realm_key(row["realm"], row["realm_slug"]), row["id"]))
+
+    @staticmethod
+    def _realm_key(realm: str, realm_slug: str | None = None) -> str:
+        """Stable realm identity: punctuation/display spelling must not fork a character."""
+        return re.sub(r"[^a-z0-9]+", "", str(realm_slug or realm).lower())
 
     @staticmethod
     def _character(db: sqlite3.Connection, character_id: int) -> sqlite3.Row:
@@ -85,9 +96,14 @@ class AchievementTracker:
 
     def add_character(self, value: dict[str, Any], actor: str | None) -> dict[str, Any]:
         stamp = now()
+        realm_key = self._realm_key(value["realm"], value.get("realmSlug"))
         with self._connect() as db:
-            db.execute("INSERT INTO characters(region,realm,name,realm_slug,created_at,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(region,realm,name) DO UPDATE SET realm_slug=excluded.realm_slug,updated_at=excluded.updated_at", (value['region'],value['realm'],value['name'],value.get('realmSlug'),stamp,stamp))
-            row=db.execute("SELECT * FROM characters WHERE region=? AND realm=? AND name=?",(value['region'],value['realm'],value['name'])).fetchone()
+            row = db.execute("SELECT * FROM characters WHERE region=? AND lower(name)=lower(?) AND realm_key=?", (value["region"], value["name"], realm_key)).fetchone()
+            if row:
+                db.execute("UPDATE characters SET realm=?, realm_slug=COALESCE(?,realm_slug), realm_key=?, updated_at=? WHERE id=?", (value["realm"], value.get("realmSlug"), realm_key, stamp, row["id"]))
+            else:
+                db.execute("INSERT INTO characters(region,realm,name,realm_slug,realm_key,created_at,updated_at) VALUES(?,?,?,?,?,?,?)", (value['region'],value['realm'],value['name'],value.get('realmSlug'),realm_key,stamp,stamp))
+            row=db.execute("SELECT * FROM characters WHERE region=? AND lower(name)=lower(?) AND realm_key=?",(value['region'],value['name'],realm_key)).fetchone()
             self._event(db,actor,'character_upsert',row['id'],None,value)
             return dict(row)
 
@@ -98,7 +114,7 @@ class AchievementTracker:
     def character_identity(self, character_id: int) -> dict[str, Any]:
         with self._connect() as db:
             row = self._character(db, character_id)
-            return {"region": row["region"], "realm": row["realm"], "name": row["name"]}
+            return {"region": row["region"], "realm": row["realm_slug"] or self._realm_key(row["realm"]), "name": row["name"]}
 
     def record_blizzard_recent(self, character_id: int, achievements: list[dict[str, Any]], actor: str | None) -> dict[str, Any]:
         """Record only achievement events explicitly returned by Blizzard."""
