@@ -1,9 +1,9 @@
 # wow-site
 
 `wow-site` is a personal World of Warcraft fan site served at
-`https://wow.batserver.au`. It uses hand-authored HTML, CSS and JavaScript with
-no framework or build step, plus a small dependency-free Node server for the
-Blizzard character equipment API.
+`https://wow.batserver.au`. The current application uses React/Vite with a
+FastAPI persistence layer, plus a dependency-free private Node adapter for
+Blizzard data and HammerLink decoding.
 
 ## Contents
 
@@ -15,6 +15,9 @@ Blizzard character equipment API.
 - `site/season-data.js` — shared season tracks and Blizzard bonus-ID mapping
 - `site/assets/` — favicon and images
 - `server.mjs` — static delivery, Blizzard API adapter and in-memory caches
+- `frontend/` — the current React/Vite player application
+- `backend/app/main.py` — authenticated browser API and static app host
+- `achievement_tracker.py` — SQLite-backed user and character state
 - `mcp_server.py` — official SDK v2 MCP surface backed by the same character API
 - `Dockerfile.mcp` / `requirements-mcp.txt` — isolated MCP sidecar image
 - `test/` — Node's built-in test suite
@@ -36,6 +39,15 @@ the first rank that beats the selected level and its crest cost.
 Season numbers and Blizzard upgrade bonus IDs are patch-specific and live in
 one place: `site/season-data.js`.
 
+### HammerLink imports
+
+The authenticated `/hammerlink` page validates an addon's `HL1:` export and
+stores the latest snapshot per account and character. It shows equipped gear,
+all occupied bag items with rich metadata and stats where the client provides
+them, Great Vault activity, timestamps, and the
+active talent import. The browser API derives its user key from the trusted
+Authelia/OAuth identity header; callers cannot supply or query another user ID.
+
 The character lookup uses Blizzard's server-to-server client credentials flow.
 Character equipment is cached in memory for five minutes. Simultaneous requests
 for the same character are coalesced, and **Refresh now** can bypass the normal
@@ -56,10 +68,19 @@ on each item card so the current-path summary remains the primary view.
 
 ### MCP v2
 
-The public Streamable HTTP endpoint at `/mcp` uses the official Python SDK v2
-and exposes eleven read-only structured tools, covering character equipment,
-profile, talents, achievements, realms, season rewards, class guidance, gear
-audits, Great Vault progress, raid progress, and observed meta builds.
+The Streamable HTTP endpoint at `/mcp` uses the official Python SDK v2 and
+exposes 26 canonical structured tools. Read-only tools cover character
+equipment, profile, talents, achievements, realms, season rewards, class
+guidance, gear audits, raid progress, observed meta builds, achievement
+planning, and the authenticated user's private HammerLink inventory. Explicitly
+labelled tracker tools can update only Consecrated Hammer's local private state;
+they do not change Blizzard or in-game data. The legacy `hammerlink_import_list`
+and `hammerlink_import_get` names remain compatibility aliases.
+
+The authenticated React app documents setup at `/mcp`, including current
+ChatGPT and Claude connection steps, suggested prompts, and a collapsed tool
+catalogue. Exact Great Vault state comes from `get_character_inventory`; the
+older inferred `get_great_vault_progress` tool is not advertised.
 
 The MCP sidecar forwards to the same guarded internal JSON routes used by the
 site so player and agent traffic share caches, rate limits, validation, and
@@ -92,9 +113,11 @@ at `/mnt/docker/infra/config/dockerconfigs/docker-compose.yml`, as the
 full deploy is:
 
 ```bash
-docker compose -p config -f /mnt/docker/infra/config/dockerconfigs/docker-compose.yml \
-  up -d --build wow-site wow-site-mcp
+./scripts/deploy.sh
 ```
+
+This rebuilds the private Blizzard adapter, the authenticated browser app, and
+the MCP sidecar after validating the Compose configuration.
 
 Traefik routes `wow.${DOMAIN_PRIMARY}` to the site on port 80 and gives the
 path-specific `/mcp` route to the MCP sidecar on port 8767.
@@ -113,9 +136,10 @@ Optional tuning variables are `CHARACTER_CACHE_TTL_SECONDS` (default `300`),
 
 ## Notes
 
-- The site is currently **public** — no authentication. `*.batserver.au`
-  resolves to the WAN address, so anything served here is internet-reachable.
-- The public lookup neither saves nor presets a personal character. Persistent
-  personal character state belongs under the reserved `/my/` URL prefix, which
-  remains empty and can be put behind auth later.
+- The browser application is protected by Authelia. The MCP endpoint uses its
+  OAuth gateway; both paths hash the authenticated subject into the same
+  account key before accessing private rows.
+- Character definitions and Blizzard-confirmed facts may be shared, but user
+  overlays, recent-character associations, labels, and HammerLink snapshots
+  are scoped by that account key.
 - `robots.txt` disallows crawling.

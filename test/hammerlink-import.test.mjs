@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { deflateRawSync } from 'node:zlib';
 import test from 'node:test';
 import { HammerLinkImportError, parseHammerLinkExport } from '../lib/hammerlink-import.mjs';
 
@@ -8,6 +9,28 @@ const fixturePath = new URL('./fixtures/hammerlink-valid.hl1', import.meta.url);
 
 async function fixture() {
   return (await readFile(fixturePath, 'utf8')).trim();
+}
+
+function encodeForPrint(buffer) {
+  const alphabet = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789()';
+  let output = '';
+  let cache = 0;
+  let bitLength = 0;
+  for (const byte of buffer) {
+    cache += byte * (2 ** bitLength);
+    bitLength += 8;
+    while (bitLength >= 6) {
+      output += alphabet[cache & 63];
+      cache >>>= 6;
+      bitLength -= 6;
+    }
+  }
+  if (bitLength > 0) output += alphabet[cache & 63];
+  return output;
+}
+
+function exportSnapshot(snapshot) {
+  return `HL1:${encodeForPrint(deflateRawSync(JSON.stringify(snapshot), { level: 9 }))}`;
 }
 
 test('decodes and validates a controlled HammerLink HL1 export', async () => {
@@ -43,4 +66,172 @@ test('never retains an imported snapshot', async () => {
   first.character.name = 'Changed only in this test';
   const second = parseHammerLinkExport(await fixture(), { now });
   assert.equal(second.character.name, 'Bluehoof');
+});
+
+test('accepts every occupied bag slot, with rich gear metadata where available', async () => {
+  const snapshot = parseHammerLinkExport(await fixture(), { now });
+  snapshot.bagEquipment = [{
+    bag: 0,
+    slot: 7,
+    itemID: 228843,
+    link: '|cffa335ee|Hitem:228843:7468:213743:0:0:0:0:0:80:66:0:0:1:12000:1:28:2462|h[Test Helm]|h|r',
+    name: 'Test Helm',
+    quality: 4,
+    itemLevel: 710,
+    baseItemLevel: 684,
+    requiredLevel: 80,
+    itemType: 'Armor',
+    itemSubType: 'Plate',
+    inventoryType: 'INVTYPE_HEAD',
+    classID: 4,
+    subclassID: 4,
+    stackCount: 1,
+    isBound: true,
+    durability: { current: 99, maximum: 100 },
+    equipmentSets: 'Raid',
+    stats: { ITEM_MOD_STRENGTH_SHORT: 1234, ITEM_MOD_HASTE_RATING_SHORT: 567 },
+    gems: [{ socket: 1, itemID: 213743, name: 'Test Gem', link: '|cff0070dd|Hitem:213743|h[Test Gem]|h|r' }]
+  }, {
+    bag: 0,
+    slot: 8,
+    itemID: 212653,
+    link: '|cffffffff|Hitem:212653|h[Test Potion]|h|r',
+    name: 'Test Potion',
+    itemType: 'Consumable',
+    itemSubType: 'Potion',
+    quality: 1,
+    stackCount: 20,
+    isBound: false
+  }];
+  const decoded = parseHammerLinkExport(exportSnapshot(snapshot), { now });
+  assert.equal(decoded.bagEquipment[0].itemLevel, 710);
+  assert.equal(decoded.bagEquipment[0].stats.ITEM_MOD_STRENGTH_SHORT, 1234);
+  assert.equal(decoded.bagEquipment[0].gems[0].itemID, 213743);
+  assert.equal(decoded.bagEquipment[1].stackCount, 20);
+  assert.equal(decoded.bagEquipment[1].inventoryType, undefined);
+});
+
+test('rejects duplicate bag locations', async () => {
+  const snapshot = parseHammerLinkExport(await fixture(), { now });
+  const item = { bag: 0, slot: 1, itemID: 1, link: '|Hitem:1|h[Test]|h' };
+  snapshot.bagEquipment = [item, { ...item }];
+  assert.throws(() => parseHammerLinkExport(exportSnapshot(snapshot), { now }), (error) => {
+    assert.ok(error instanceof HammerLinkImportError);
+    assert.equal(error.code, 'invalid-schema');
+    return true;
+  });
+});
+
+test('accepts option-aware exports with currency caps and owned housing decor', async () => {
+  const legacy = parseHammerLinkExport(await fixture(), { now });
+  const snapshot = {
+    format: 2,
+    capturedAt: legacy.capturedAt,
+    character: legacy.character,
+    exportOptions: { equipment: false, bagItems: false, talents: false, vault: false, currencyCaps: true, decorInventory: true },
+    currencyCaps: [{
+      currencyID: 3284, name: 'Gilded Crest', quantity: 42, maxQuantity: 90,
+      maxWeeklyQuantity: 30, quantityEarnedThisWeek: 12, totalEarned: 312,
+      canEarnPerWeek: true, useTotalEarnedForMaxQty: true, isAccountWide: false,
+    }],
+    decorInventory: {
+      available: true, capturedAt: legacy.capturedAt, totalOwnedCount: 4, exemptOwnedCount: 1, maxOwnedCount: 200,
+      items: [{ decorID: 77, itemID: 228000, name: 'Bluehoof\'s Chair', storedCount: 2, placedCount: 1, redeemableCount: 0, destroyableCount: 2, uniqueTrophy: false, allowedIndoors: true, allowedOutdoors: false }],
+    },
+  };
+  const decoded = parseHammerLinkExport(exportSnapshot(snapshot), { now });
+  assert.equal(decoded.equipment, undefined);
+  assert.equal(decoded.currencyCaps[0].quantityEarnedThisWeek, 12);
+  assert.equal(decoded.decorInventory.items[0].placedCount, 1);
+});
+
+test('accepts a large valid Housing catalog and reports an explicit decompressed-size limit', () => {
+  const snapshot = {
+    format: 2,
+    capturedAt: now / 1000,
+    character: { name: 'Test', realm: 'Test Realm', region: 1, class: 'Paladin', level: 90 },
+    exportOptions: { equipment: false, bagItems: false, talents: false, vault: false, currencyCaps: false, decorInventory: true },
+    decorInventory: {
+      available: true,
+      items: Array.from({ length: 1024 }, (_, index) => ({
+        decorID: index + 1,
+        itemID: 100_000 + index,
+        name: `Decor ${index + 1} ${'x'.repeat(220)}`,
+        icon: 200_000 + index,
+        storedCount: 1,
+        placedCount: 0,
+        redeemableCount: 0,
+        destroyableCount: 0,
+        uniqueTrophy: false,
+        allowedIndoors: true,
+        allowedOutdoors: true,
+      })),
+    },
+  };
+  const exported = exportSnapshot(snapshot);
+  const decoded = parseHammerLinkExport(exported, { now });
+  assert.equal(decoded.decorInventory.items.length, 1024);
+
+  assert.throws(() => parseHammerLinkExport(exported, {
+    now,
+    limits: { maxDecompressedBytes: 262_144 },
+  }), (error) => {
+    assert.ok(error instanceof HammerLinkImportError);
+    assert.equal(error.code, 'too-large');
+    assert.match(error.message, /safe import limit/);
+    return true;
+  });
+});
+
+test('expands a complete compact format 3 Housing catalog', async () => {
+  const legacy = parseHammerLinkExport(await fixture(), { now });
+  const packedItems = Array.from({ length: 4096 }, (_, index) => [
+    index + 1, `Decor ${index + 1}`, 100_000 + index, 200_000 + index,
+    1, index % 2, index % 3, 1, index % 8,
+  ]);
+  const exported = exportSnapshot({
+    format: 3,
+    capturedAt: legacy.capturedAt,
+    character: legacy.character,
+    exportOptions: { equipment: false, bagItems: false, talents: false, vault: false, currencyCaps: false, decorInventory: true },
+    decorInventory: { available: true, truncated: false, packedItems },
+  });
+  assert.ok(exported.length < 262_144, 'expected a 4,096-record compact export to fit one paste');
+
+  const decoded = parseHammerLinkExport(exported, { now });
+  assert.equal(decoded.format, 3);
+  assert.equal(decoded.decorInventory.items.length, 4096);
+  assert.equal(decoded.decorInventory.packedItems, undefined);
+  assert.deepEqual(decoded.decorInventory.items[3], {
+    decorID: 4, name: 'Decor 4', storedCount: 1, placedCount: 1,
+    redeemableCount: 0, destroyableCount: 1, uniqueTrophy: true,
+    allowedIndoors: true, allowedOutdoors: false, itemID: 100003, icon: 200003,
+  });
+});
+
+test('rejects malformed compact Housing rows', async () => {
+  const legacy = parseHammerLinkExport(await fixture(), { now });
+  const snapshot = {
+    format: 3,
+    capturedAt: legacy.capturedAt,
+    character: legacy.character,
+    exportOptions: { decorInventory: true },
+    decorInventory: { available: true, packedItems: [[77, 'Chair']] },
+  };
+  assert.throws(() => parseHammerLinkExport(exportSnapshot(snapshot), { now }), (error) => {
+    assert.ok(error instanceof HammerLinkImportError);
+    assert.equal(error.code, 'invalid-schema');
+    return true;
+  });
+});
+
+test('rejects unbounded or malformed decor inventory', async () => {
+  const legacy = parseHammerLinkExport(await fixture(), { now });
+  legacy.format = 2;
+  legacy.decorInventory = { available: true, items: [{ decorID: 1, name: 'Chair', storedCount: -1 }] };
+  assert.throws(() => parseHammerLinkExport(exportSnapshot(legacy), { now }), (error) => {
+    assert.ok(error instanceof HammerLinkImportError);
+    assert.equal(error.code, 'invalid-schema');
+    return true;
+  });
 });

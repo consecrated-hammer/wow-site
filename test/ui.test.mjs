@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 
 const readSite = (name) => readFile(new URL(`../site/${name}`, import.meta.url), 'utf8');
+const readFrontend = (name) => readFile(new URL(`../frontend/src/${name}`, import.meta.url), 'utf8');
 
 test('home page links only to implemented player modules', async () => {
   const html = await readSite('index.html');
@@ -26,12 +27,33 @@ test('MCP page publishes the current read-only tool surface', async () => {
   const tools = [
     'get_character_profile', 'get_character_equipment', 'get_character_talents',
     'get_character_achievements', 'list_realms', 'get_gear_audit',
-    'get_great_vault_progress', 'get_raid_progress', 'get_season_rewards',
+    'get_character_inventory', 'get_raid_progress', 'get_season_rewards',
     'get_class_guidance', 'get_meta_builds', 'get_mythic_planner'
   ];
   assert.match(html, /https:\/\/wow\.batserver\.au\/mcp/);
   assert.match(html, /12 current capabilities/);
   for (const tool of tools) assert.match(html, new RegExp(tool));
+  assert.doesNotMatch(html, /get_great_vault_progress/);
+});
+
+test('React shell publishes the MCP guide and HammerLink CurseForge project', async () => {
+  const app = await readFrontend('App.jsx');
+  assert.match(app, /<NavLink to="\/mcp">MCP<\/NavLink>/);
+  assert.match(app, /<Route path="\/mcp" element=\{<McpGuide \/>\} \/>/);
+  assert.match(app, /https:\/\/www\.curseforge\.com\/wow\/addons\/hammerlink/);
+  assert.match(app, /https:\/\/wow\.batserver\.au\/mcp/);
+  assert.match(app, /Suggested prompts/);
+  assert.match(app, /<details className="mcp-capabilities">/);
+  assert.doesNotMatch(app, /<details className="mcp-capabilities" open/);
+  for (const tool of [
+    'get_character_inventory',
+    'get_character_profile',
+    'get_class_guidance',
+    'achievement_dashboard',
+    'achievement_build_session_plan',
+    'achievement_update_state',
+  ]) assert.match(app, new RegExp(tool));
+  assert.doesNotMatch(app, /get_great_vault_progress/);
 });
 
 test('upgrade states have visible non-colour cues', async () => {

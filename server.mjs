@@ -145,7 +145,9 @@ async function readJsonBody(request, maximumBytes = 70_000) {
 
 const HAMMERLINK_REGIONS = Object.freeze({ 1: 'us', 2: 'kr', 3: 'eu', 4: 'tw' });
 async function importHammerLink(request) {
-  const body = await readJsonBody(request);
+  // Format 3 can carry a complete large Housing Catalog in one paste. Keep
+  // this request bound just above the decoder's 256 KiB printable envelope.
+  const body = await readJsonBody(request, 280_000);
   if (!body || typeof body.export !== 'string') throw new HttpError(400, 'invalid_import', 'Paste a HammerLink export.');
   let snapshot;
   try { snapshot = parseHammerLinkExport(body.export); }
@@ -160,9 +162,11 @@ async function importHammerLink(request) {
     lookup: { region, realm: normaliseRealm(snapshot.character.realm), name: normaliseCharacter(snapshot.character.name) },
     capturedAt: new Date(snapshot.capturedAt * 1000).toISOString(),
     character: snapshot.character,
-    equipmentCount: snapshot.equipment.length,
-    hasTalentImport: Boolean(snapshot.talents.importString),
-    vault: snapshot.vault
+    equipmentCount: snapshot.equipment?.length ?? 0,
+    bagItemCount: snapshot.bagEquipment?.length ?? 0,
+    hasTalentImport: Boolean(snapshot.talents?.importString),
+    vault: snapshot.vault,
+    snapshot
   };
 }
 
@@ -193,6 +197,8 @@ export function createCharacterService(options = {}) {
   const realmPending = new Map();
   const seasonCache = new Map();
   const seasonPending = new Map();
+  const achievementCategoryPathCache = new Map();
+  const achievementCategoryPathPending = new Map();
   let token = null;
   let tokenExpiresAt = 0;
   let tokenPending = null;
@@ -282,20 +288,26 @@ export function createCharacterService(options = {}) {
     return request;
   }
 
-  async function getCharacterRender(region, realm, character, accessToken) {
+  async function getCharacterMedia(region, realm, character, accessToken) {
     try {
       const payload = await fetchJson(characterUrl(region, realm, character, 'character-media'), {
         headers: { authorization: `Bearer ${accessToken}` }
       });
-      // "main-raw" is Blizzard's full-character render; avatar is a useful fallback
-      // for characters whose full render is not available yet.
-      return payload.assets?.find((asset) => asset.key === 'main-raw')?.value
-        || payload.assets?.find((asset) => asset.key === 'avatar')?.value
-        || null;
+      const avatar = payload.assets?.find((asset) => asset.key === 'avatar')?.value || null;
+      return {
+        avatar,
+        // "main-raw" is Blizzard's full-character render; avatar remains a
+        // useful fallback for characters whose full render is unavailable.
+        render: payload.assets?.find((asset) => asset.key === 'main-raw')?.value || avatar
+      };
     } catch {
       // Equipment remains the primary result if this optional presentation asset fails.
-      return null;
+      return { avatar: null, render: null };
     }
+  }
+
+  async function fetchCharacterMedia(region, realm, character) {
+    return getCharacterMedia(region, realm, character, await getToken());
   }
 
   async function fetchCharacter(region, realm, character) {
@@ -331,7 +343,7 @@ export function createCharacterService(options = {}) {
       upgrade: resolveUpgrade(item),
       seasonUpgrades: findSeasonUpgrades(item.level?.value)
       }))),
-      getCharacterRender(region, realm, character, accessToken)
+      getCharacterMedia(region, realm, character, accessToken)
     ]);
 
     return {
@@ -341,7 +353,7 @@ export function createCharacterService(options = {}) {
         realm: payload.character?.realm?.name || realm,
         region: region.toUpperCase()
       },
-      render,
+      render: render.render,
       items
     };
   }
@@ -494,7 +506,12 @@ export function createCharacterService(options = {}) {
         id: event.achievement?.id ?? null,
         name: event.achievement?.name || null,
         completedAt: event.timestamp ? new Date(event.timestamp).toISOString() : null
-      }))
+      })),
+      achievementProgress: (payload.achievements || []).map((entry) => ({
+        id: entry.achievement?.id,
+        completedAt: entry.completed_timestamp ? new Date(entry.completed_timestamp).toISOString() : null,
+        criteria: entry.criteria || null
+      })).filter((entry) => Number.isInteger(entry.id))
     };
   }
 
@@ -675,10 +692,183 @@ export function createCharacterService(options = {}) {
   }
 
   async function lookupAchievements(query) {
-    return lookupCached('achievements', query, fetchAchievements);
+    const [achievements, profile, media] = await Promise.all([
+      lookupCached('achievements', query, fetchAchievements),
+      lookupProfile(query),
+      lookupCached('character-media', query, fetchCharacterMedia)
+        .catch(() => ({ avatar: null, render: null }))
+    ]);
+    return {
+      ...achievements,
+      character: {
+        ...achievements.character,
+        faction: profile.faction || null,
+        race: profile.race?.name || null,
+        characterClass: profile.characterClass?.name || null,
+        avatarUrl: media.avatar || null
+      }
+    };
   }
 
-  return { lookup, lookupTalents, lookupProfile, lookupAchievements, listRealms, currentSeasonId, lookupVault, lookupRaidProgress };
+  async function achievementCategoryPaths(region, accessToken) {
+    if (achievementCategoryPathCache.has(region)) return achievementCategoryPathCache.get(region);
+    if (achievementCategoryPathPending.has(region)) return achievementCategoryPathPending.get(region);
+    const request = (async () => {
+      const locale = REGION_LOCALES[region];
+      const indexUrl = new URL(`https://${region}.api.blizzard.com/data/wow/achievement-category/index`);
+      indexUrl.searchParams.set('namespace', `static-${region}`);
+      indexUrl.searchParams.set('locale', locale);
+      const index = await fetchJson(indexUrl, { headers: { authorization: `Bearer ${accessToken}` } });
+      const categories = index.categories || [];
+      const details = [];
+      for (let start = 0; start < categories.length; start += 5) {
+        details.push(...await Promise.all(categories.slice(start, start + 5).map(async ({ id }) => {
+          const url = new URL(`https://${region}.api.blizzard.com/data/wow/achievement-category/${id}`);
+          url.searchParams.set('namespace', `static-${region}`);
+          url.searchParams.set('locale', locale);
+          return fetchJson(url, { headers: { authorization: `Bearer ${accessToken}` } });
+        })));
+      }
+      const names = new Map(categories.map(({ id, name }) => [id, name]));
+      const parents = new Map();
+      for (const category of details) {
+        names.set(category.id, category.name);
+        for (const child of category.subcategories || []) parents.set(child.id, category.id);
+      }
+      const paths = new Map();
+      for (const [id, name] of names) {
+        const parts = [name];
+        const seen = new Set([id]);
+        let parent = parents.get(id);
+        while (parent && !seen.has(parent)) {
+          seen.add(parent);
+          parts.unshift(names.get(parent) || String(parent));
+          parent = parents.get(parent);
+        }
+        paths.set(id, parts.join(' > '));
+      }
+      achievementCategoryPathCache.set(region, paths);
+      return paths;
+    })().finally(() => achievementCategoryPathPending.delete(region));
+    achievementCategoryPathPending.set(region, request);
+    return request;
+  }
+
+  function classifyAchievementReward(description, itemDetails = null) {
+    const value = String(description || '').toLowerCase();
+    if (!value && !itemDetails) return null;
+    if (value.includes('decor reward') || value.includes('decor rewards')) return 'decor';
+    if (value.includes('mount')) return 'mount';
+    if (value.includes('pet')) return 'pet';
+    if (value.includes('title')) return 'title';
+    if (value.includes('toy')) return 'toy';
+    if (/(appearance|transmog|arsenal|customization|illusion|paint color)/.test(value)) return 'appearance';
+    if (/(cache|currency|infinite knowledge|seekerthread|anglerthread)/.test(value)) return 'cache';
+    if (value.includes('unlock')) return 'unlock';
+    if (/(tabard|weapon|armor|armour|gear)/.test(value)) return 'gear';
+    if ([2, 4].includes(itemDetails?.item_class?.id) || (itemDetails?.inventory_type?.type && itemDetails.inventory_type.type !== 'NON_EQUIP')) return 'gear';
+    return 'other';
+  }
+
+  async function resolveDecorReward(description, region, locale, accessToken) {
+    const name = String(description || '').match(/Decor Rewards?:\s*(.+)$/i)?.[1]?.trim();
+    if (!name) return null;
+    const searchUrl = new URL(`https://${region}.api.blizzard.com/data/wow/search/decor`);
+    searchUrl.searchParams.set('namespace', `static-${region}`);
+    searchUrl.searchParams.set('locale', locale);
+    searchUrl.searchParams.set(`name.${locale}`, name);
+    searchUrl.searchParams.set('_pageSize', '100');
+    const search = await fetchJson(searchUrl, { headers: { authorization: `Bearer ${accessToken}` } });
+    const match = (search.results || []).find((entry) =>
+      entry.data?.name?.[locale] === name || entry.data?.item?.name?.[locale] === name
+    );
+    const decorId = match?.data?.id;
+    const itemId = match?.data?.item?.id;
+    if (!Number.isInteger(decorId)) return null;
+    let iconUrl = null;
+    if (Number.isInteger(itemId)) {
+      const mediaUrl = new URL(`https://${region}.api.blizzard.com/data/wow/media/item/${itemId}`);
+      mediaUrl.searchParams.set('namespace', `static-${region}`);
+      mediaUrl.searchParams.set('locale', locale);
+      iconUrl = await getMediaIcon(mediaUrl.toString(), accessToken);
+    }
+    return {
+      itemId: Number.isInteger(itemId) ? itemId : null,
+      itemName: name,
+      iconUrl,
+      url: `https://www.wowhead.com/decor/${decorId}`
+    };
+  }
+
+  async function lookupAchievementMetadata(ids, region = 'us', includeMedia = false) {
+    const accessToken = await getToken();
+    const locale = REGION_LOCALES[region];
+    const categoryPaths = await achievementCategoryPaths(region, accessToken).catch(() => new Map());
+    const records = await Promise.all(ids.map(async (id) => {
+      try {
+        const url = new URL(`https://${region}.api.blizzard.com/data/wow/achievement/${id}`);
+        url.searchParams.set('namespace', `static-${region}`);
+        url.searchParams.set('locale', locale);
+        const item = await fetchJson(url, { headers: { authorization: `Bearer ${accessToken}` } });
+        if (!Number.isInteger(item.id) || typeof item.name !== 'string') return null;
+        let iconUrl = null;
+        let rewardItemIconUrl = null;
+        let rewardItemId = item.reward_item?.id || null;
+        let rewardItemName = item.reward_item?.name || null;
+        let rewardUrl = rewardItemId ? `https://www.wowhead.com/item=${rewardItemId}` : null;
+        let rewardItemDetails = null;
+        if (rewardItemId) {
+          const rewardMediaUrl = new URL(`https://${region}.api.blizzard.com/data/wow/media/item/${rewardItemId}`);
+          rewardMediaUrl.searchParams.set('namespace', `static-${region}`);
+          rewardMediaUrl.searchParams.set('locale', locale);
+          const rewardDetailUrl = item.reward_item?.key?.href
+            ? new URL(item.reward_item.key.href)
+            : new URL(`https://${region}.api.blizzard.com/data/wow/item/${rewardItemId}`);
+          rewardDetailUrl.searchParams.set('namespace', `static-${region}`);
+          rewardDetailUrl.searchParams.set('locale', locale);
+          [rewardItemIconUrl, rewardItemDetails] = await Promise.all([
+            getMediaIcon(rewardMediaUrl.toString(), accessToken),
+            fetchJson(rewardDetailUrl, { headers: { authorization: `Bearer ${accessToken}` } }).catch(() => null)
+          ]);
+        } else if (/Decor Rewards?:/i.test(item.reward_description || '')) {
+          const decor = await resolveDecorReward(item.reward_description, region, locale, accessToken).catch(() => null);
+          if (decor) {
+            rewardItemId = decor.itemId;
+            rewardItemName = decor.itemName;
+            rewardItemIconUrl = decor.iconUrl;
+            rewardUrl = decor.url;
+          }
+        }
+        if (includeMedia) {
+          const achievementMediaUrl = item.media?.key?.href ? new URL(item.media.key.href) : null;
+          if (achievementMediaUrl) achievementMediaUrl.searchParams.set('locale', locale);
+          iconUrl = achievementMediaUrl ? await getMediaIcon(achievementMediaUrl.toString(), accessToken) : null;
+        }
+        return {
+          achievementId: item.id,
+          name: item.name,
+          points: Number.isInteger(item.points) ? item.points : null,
+          category: categoryPaths.get(item.category?.id) || item.category?.name || null,
+          description: item.description || null,
+          criteria: item.criteria || null,
+          requiredFaction: item.requirements?.faction?.type || null,
+          isAccountWide: Boolean(item.is_account_wide),
+          rewardDescription: item.reward_description || null,
+          rewardType: classifyAchievementReward(item.reward_description, rewardItemDetails),
+          rewardUrl,
+          rewardItemId,
+          rewardItemName,
+          rewardItemIconUrl,
+          iconUrl
+        };
+      } catch (error) {
+        return { achievementId: id, error: error.code || 'upstream_error' };
+      }
+    }));
+    return { source: 'Blizzard', records: records.filter(Boolean) };
+  }
+
+  return { lookup, lookupTalents, lookupProfile, lookupAchievements, lookupAchievementMetadata, listRealms, currentSeasonId, lookupVault, lookupRaidProgress };
 }
 
 function decorate(data, fetchedAt, status, refreshCooldownMs, warning = null, refreshBaseAt = fetchedAt) {
@@ -799,7 +989,24 @@ function validateSpecQuery(url) {
     specId = Number(rawSpecId);
     if (!Number.isInteger(specId) || specId < 1) throw new HttpError(400, 'invalid_spec_id', 'specId must be a positive whole number.');
   }
-  return { className, spec, specId };
+  const activity = String(url.searchParams.get('activity') || '').trim().toLowerCase() || null;
+  if (activity && !/^[a-z0-9+_-]{2,30}$/.test(activity)) {
+    throw new HttpError(400, 'invalid_activity', 'Enter a valid activity such as mplus, raid or pvp.');
+  }
+  const heroTalent = String(url.searchParams.get('heroTalent') || '').trim().toLowerCase() || null;
+  if (heroTalent && !/^[a-z0-9-]{2,48}$/.test(heroTalent)) {
+    throw new HttpError(400, 'invalid_hero_talent', 'Enter a valid hero talent key.');
+  }
+  const source = String(url.searchParams.get('source') || '').trim().toLowerCase() || null;
+  if (source && !['icyveins', 'ugg'].includes(source)) {
+    throw new HttpError(400, 'invalid_guidance_source', 'Source must be icyveins or ugg.');
+  }
+  const rawEncounterId = url.searchParams.get('encounterId');
+  const encounterId = rawEncounterId ? Number(rawEncounterId) : null;
+  if (rawEncounterId && (!Number.isInteger(encounterId) || encounterId < 1)) {
+    throw new HttpError(400, 'invalid_encounter', 'encounterId must be a positive whole number.');
+  }
+  return { className, spec, specId, activity, heroTalent, encounterId, source };
 }
 
 function validatePlannerQuery(url) {
@@ -945,6 +1152,11 @@ export const API_ROUTES = new Map([
   ['/api/talents', (service, url) => service.lookupTalents(validateLookup(url))],
   ['/api/profile', (service, url) => service.lookupProfile(validateLookup(url))],
   ['/api/achievements', (service, url) => service.lookupAchievements(validateLookup(url))],
+  ['/api/achievement-metadata', (service, url) => {
+    const ids = [...new Set((url.searchParams.get('ids') || '').split(',').map(Number).filter(Number.isInteger))];
+    if (!ids.length || ids.length > 25 || ids.some((id) => id < 1)) throw new HttpError(400, 'invalid_achievement_ids', 'Provide 1 to 25 positive achievement IDs.');
+    return service.lookupAchievementMetadata(ids, url.searchParams.get('region') || 'us', url.searchParams.get('includeMedia') === '1');
+  }],
   ['/api/realms', (service, url) => service.listRealms(validateRegion(url))],
   ['/api/class-guidance', async (service, url) => service.guidance.classGuidance(validateSpecQuery(url))],
   ['/api/gear-audit', async (service, url) => {

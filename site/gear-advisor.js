@@ -624,7 +624,7 @@ import { SEASON } from './season-data.js';
   function enhancementState(item, guide) {
     var missingGem = (item.sockets || []).some(function (socket) { return !socket.itemName; });
     var recommendation = (guide?.enchants || []).find(function (entry) { return guideSlotMatches(item, entry.slot); });
-    return { missingGem: missingGem, missingEnchant: Boolean(recommendation && !(item.enchantments || []).length), recommendation: recommendation?.best?.name || null };
+    return { missingGem: missingGem, missingEnchant: Boolean(recommendation && !(item.enchantments || []).length), recommendation: recommendation?.enchantId || recommendation?.spellId || null };
   }
   function renderReadyCheck(items, audit, guide) {
     var ready = document.createElement('section'); ready.className = 'ready-check'; appendText(ready, 'h4', '', 'Ready check');
@@ -644,15 +644,15 @@ import { SEASON } from './season-data.js';
     try {
       var guide;
       if (demoMode) guide = demoGuidance();
-      else { var params = new URLSearchParams({ class: profile.characterClass.name, spec: profile.activeSpecialization.name, specId: String(profile.activeSpecialization.id || '') }); var response = await fetch('/api/class-guidance?' + params, { headers: { accept: 'application/json' } }); guide = await response.json(); if (!response.ok || !guide.available) throw new Error(guide.reason || 'Guidance unavailable.'); }
+      else { var params = new URLSearchParams({ class: profile.characterClass.name, spec: profile.activeSpecialization.name, specId: String(profile.activeSpecialization.id || ''), activity: 'mplus' }); var response = await fetch('/api/class-guidance?' + params, { headers: { accept: 'application/json' } }); guide = await response.json(); if (!response.ok || !guide.available) throw new Error(guide.reason || 'Guidance unavailable.'); }
       characterGuide.replaceChildren(); appendText(characterGuide, 'h3', '', 'Before tonight');
-      appendText(characterGuide, 'p', 'guidance-note', demoMode ? 'DEV DEMO · illustrative Season 2 guidance and planner data; not live advice.' : 'Community guidance from ClassCodex · scraped ' + (guide.lastScrape || 'unknown date') + '. Treat as dated advice.');
+      appendText(characterGuide, 'p', 'guidance-note', demoMode ? 'DEV DEMO · illustrative Season 2 guidance and planner data; not live advice.' : 'Community guidance from ClassCodex · generated ' + (guide.lastScrape || 'unknown date') + '. Treat as dated advice.');
       characterGuide.appendChild(renderReadyCheck(items || [], audit, guide));
       var grid = document.createElement('div'); grid.className = 'guide-grid';
-      grid.appendChild(guideCard('Build', function (card) { var build = (guide.talentBuilds || []).find(function (entry) { return entry.context === 'Mythic+'; }) || guide.talentBuilds?.[0]; appendText(card, 'p', '', (build?.heroTalent || profile.activeHeroTalentTree?.name || 'Current hero tree') + ' · ' + (build?.context || 'No recommended build')); }));
-      grid.appendChild(guideCard('Stats to watch', function (card) { var p = guide.statPriorities?.[0]; appendText(card, 'p', '', p ? p.stats.map(function (tier) { return tier.join(' / '); }).join(' › ') : 'No stat priority available.'); var targets = guide.statTargets?.['Mythic+']?.targets; if (targets) appendText(card, 'p', 'guide-detail', Object.entries(targets).map(function (entry) { return entry[0] + ' ' + entry[1]; }).join(' · ')); }));
-      grid.appendChild(guideCard('Rotation focus', function (card) { var step = guide.rotation?.[0]?.steps?.[0]; appendText(card, 'p', '', step || 'No rotation priority available.'); }));
-      grid.appendChild(guideCard('Enhancements', function (card) { appendText(card, 'p', '', (guide.enchants || []).map(function (item) { return item.slot + ': ' + item.best?.name; }).join(' · ') || 'No enhancement guidance available.'); }));
+      grid.appendChild(guideCard('Build', function (card) { var build = (guide.talentBuilds || []).find(function (entry) { return entry.recommended || entry.topDps; }) || guide.talentBuilds?.[0]; appendText(card, 'p', '', (build?.heroTalentName || build?.heroTalent || profile.activeHeroTalentTree?.name || 'Current hero tree') + ' · ' + (build?.label || build?.activity || 'No recommended build')); }));
+      grid.appendChild(guideCard('Stats to watch', function (card) { var p = guide.statPriorities?.[0]; appendText(card, 'p', '', p ? (p.secondary || []).map(function (tier) { return tier.join(' / '); }).join(' › ') : 'No stat priority available.'); var targets = guide.statTargets?.[0]?.targets; if (targets) appendText(card, 'p', 'guide-detail', Object.entries(targets).map(function (entry) { return entry[0] + ' ' + entry[1]; }).join(' · ')); }));
+      grid.appendChild(guideCard('Rotation focus', function (card) { var rotation = guide.rotation?.[0]; appendText(card, 'p', '', rotation ? rotation.stepCount + ' source steps · abilities ' + (rotation.abilityIds || []).slice(0, 5).join(', ') : 'Use the linked source guide for rotation detail.'); }));
+      grid.appendChild(guideCard('Enhancements', function (card) { appendText(card, 'p', '', (guide.enchants || []).map(function (item) { return item.slot + ': ' + (item.enchantId || item.spellId || 'recommended'); }).join(' · ') || 'No enhancement guidance available.'); }));
       characterGuide.appendChild(grid);
       currentGuide = guide;
       applyEnhancementCues(items || [], guide);

@@ -26,6 +26,105 @@ def _success_character() -> dict:
 
 
 class WowMcpTests(unittest.TestCase):
+    def test_hammerlink_tools_return_only_the_authenticated_users_snapshot(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            tracker = server.AchievementTracker(Path(directory) / "tracker.sqlite3")
+            tracker.initialise()
+            character = tracker.add_character({"region": "us", "realm": "DathRemar", "name": "Reilly"}, "bianca")["id"]
+            tracker.select_character(character, "kevin")
+            base = {
+                "format": 1, "capturedAt": 1787200000,
+                "character": {"name":"Reilly","realm":"DathRemar","region":1,"class":"PALADIN","level":80},
+                "equipment": [], "talents": {"importString": None},
+                "currencyCaps": [
+                    {"currencyID":3509,"name":"Tidal Spark Dust","quantity":3},
+                    {"currencyID":3442,"name":"Adventurer Mistcrest","quantity":149},
+                ],
+                "vault": {"capturedAt":1787200000,"activities":[{"type":6,"index":1,"threshold":2,"progress":4}]},
+            }
+            tracker.save_hammerlink_import("bianca", character, {**base, "bagEquipment": [{"bag":0,"slot":1,"itemID":1,"link":"Bianca"}]})
+            tracker.save_hammerlink_import("kevin", character, {**base, "bagEquipment": [{"bag":0,"slot":2,"itemID":2,"link":"Kevin"}]})
+            with patch.object(server, "TRACKER", tracker):
+                listed, list_error = server._invoke_tool("list_character_inventories", {}, {"actor": "kevin"})
+                detail, detail_error = server._invoke_tool("get_character_inventory", {"characterId": character}, {"actor": "kevin"})
+                legacy, legacy_error = server._invoke_tool("hammerlink_import_get", {"characterId": character}, {"actor": "kevin"})
+                anonymous, anonymous_error = server._invoke_tool("list_character_inventories", {}, {})
+            self.assertFalse(list_error or detail_error)
+            self.assertEqual(len(listed["imports"]), 1)
+            self.assertEqual(detail["snapshot"]["bagEquipment"][0]["itemID"], 2)
+            self.assertEqual(detail["snapshot"]["vault"]["activities"][0]["activityTypeName"], "World activities")
+            self.assertEqual(detail["snapshot"]["vault"]["activities"][0]["displayProgress"], 2)
+            self.assertEqual(detail["snapshot"]["vault"]["activities"][0]["progress"], 4)
+            self.assertEqual([item["currencyID"] for item in detail["snapshot"]["currencyCaps"]], [3442, 3509])
+            self.assertEqual(legacy["snapshot"]["bagEquipment"][0]["itemID"], 2)
+            self.assertFalse(legacy_error)
+            self.assertEqual(detail["provenance"], "in_game_export")
+            self.assertIn("get_character_inventory", server.TOOLS)
+            self.assertNotIn("get_great_vault_progress", server.TOOLS)
+            self.assertIn("stack count", server.TOOLS["get_character_inventory"].description)
+            self.assertIn("displayProgress", server.TOOLS["get_character_inventory"].description)
+            self.assertIn("authoritative", server.TOOLS["get_character_inventory"].description)
+            self.assertIn("Adventurer, Veteran, Champion", server.TOOLS["get_character_inventory"].description)
+            self.assertTrue(anonymous_error)
+            self.assertIn("authentication", anonymous["message"])
+
+    def test_recent_character_can_be_forgotten_without_deleting_shared_data(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            tracker = server.AchievementTracker(Path(directory) / "tracker.sqlite3")
+            tracker.initialise()
+            character = tracker.add_character({"region": "us", "realm": "DathRemar", "name": "Visitor"}, "owner")["id"]
+            with patch.object(server, "TRACKER", tracker):
+                listed, list_error = server._invoke_tool("achievement_character_list", {}, {"actor": "owner"})
+                forgotten, forget_error = server._invoke_tool("achievement_character_forget", {"characterId": character}, {"actor": "owner"})
+                after, after_error = server._invoke_tool("achievement_character_list", {}, {"actor": "owner"})
+            self.assertFalse(list_error or forget_error or after_error)
+            self.assertEqual([item["id"] for item in listed["characters"]], [character])
+            self.assertTrue(forgotten["removed"])
+            self.assertEqual(after["characters"], [])
+            self.assertEqual(tracker.character_identity(character)["name"], "Visitor")
+
+    def test_achievement_comparison_is_exposed_as_a_read_only_mcp_tool(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            tracker = server.AchievementTracker(Path(directory) / "tracker.sqlite3")
+            tracker.initialise()
+            primary = tracker.add_character({"region": "us", "realm": "DathRemar", "name": "Reilly"}, "bianca")["id"]
+            comparison = tracker.add_character({"region": "us", "realm": "DathRemar", "name": "Ferality"}, "bianca")["id"]
+            tracker.set_priority(primary, 42, 100, "bianca")
+            tracker.set_priority(comparison, 42, 0, "bianca")
+            with tracker._connect() as db:
+                db.execute(
+                    "UPDATE user_achievement_overlays SET imported_tip='Use one helper.',imported_tip_source='Checklist' "
+                    "WHERE user_id='bianca' AND character_id=? AND achievement_id=42",
+                    (primary,),
+                )
+            tracker.update_state({"characterId": primary, "achievementId": 42, "state": "unearned", "source": "manual"}, "bianca")
+            tracker.update_state({"characterId": comparison, "achievementId": 42, "state": "in_progress", "source": "manual", "progressCurrent": 2, "progressTarget": 5}, "bianca")
+            with patch.object(server, "TRACKER", tracker):
+                result, is_error = server._invoke_tool(
+                    "achievement_compare",
+                    {"primaryCharacterId": primary, "comparisonCharacterId": comparison},
+                    {"actor": "bianca"},
+                )
+            self.assertFalse(is_error)
+            self.assertTrue(result["neededByBoth"])
+            self.assertEqual(result["achievements"][0]["comparisonState"], "in_progress")
+            self.assertEqual(result["achievements"][0]["comparisonProgressCurrent"], 2)
+            self.assertEqual(result["achievements"][0]["importedTip"], "Use one helper.")
+            self.assertIn("excludePvp", server.TOOLS["achievement_compare"].input_schema["properties"])
+            self.assertIn("excludePvp", server.TOOLS["achievement_list"].input_schema["properties"])
+            self.assertIn("includeUnavailable", server.TOOLS["achievement_compare"].input_schema["properties"])
+            self.assertIn("includeUnavailable", server.TOOLS["achievement_list"].input_schema["properties"])
+
+            tracker.record_blizzard_recent(primary, [{
+                "id": 42, "name": "Recent from Blizzard", "completedAt": "2026-08-20T01:02:03+00:00",
+            }], "bianca")
+            with patch.object(server, "TRACKER", tracker):
+                dashboard, dashboard_error = server._invoke_tool(
+                    "achievement_dashboard", {"characterIds": [primary]}, {"actor": "bianca"},
+                )
+            self.assertFalse(dashboard_error)
+            self.assertEqual(dashboard["recentAchievements"][0]["achievements"][0]["name"], "Recent from Blizzard")
+
     def test_runtime_and_dual_protocol_discovery(self) -> None:
         self.assertEqual(version("mcp"), "2.0.0")
 
@@ -51,10 +150,10 @@ class WowMcpTests(unittest.TestCase):
                 Draft202012Validator.check_schema(tool.output_schema)
                 annotations = tool.annotations.model_dump(by_alias=True, exclude_none=True)
                 self.assertEqual(annotations["readOnlyHint"], tool.name not in {
-                    "achievement_character_upsert", "achievement_refresh_character", "achievement_set_priority", "achievement_update_state", "achievement_set_curated_metadata"
+                    "achievement_character_upsert", "achievement_character_forget", "achievement_refresh_character", "achievement_set_priority", "achievement_priority_labels_set", "achievement_update_state", "achievement_set_curated_metadata"
                 })
-                self.assertFalse(annotations["destructiveHint"])
-                self.assertEqual(annotations["idempotentHint"], annotations["readOnlyHint"])
+                self.assertEqual(annotations["destructiveHint"], tool.name == "achievement_character_forget")
+                self.assertEqual(annotations["idempotentHint"], annotations["readOnlyHint"] or tool.name == "achievement_character_forget")
 
     def test_character_result_is_structured_and_audited(self) -> None:
         metadata = {
@@ -234,6 +333,19 @@ class WowMcpTests(unittest.TestCase):
             },
         )
 
+    def test_request_metadata_uses_preferred_username_for_browser_mcp_identity_parity(self) -> None:
+        request = type("Request", (), {
+            "headers": {
+                "x-auth-request-sub": "opaque-oauth-subject",
+                "x-auth-request-preferred-username": "kevin",
+                "user-agent": "test-agent",
+            },
+            "client": type("Client", (), {"host": "127.0.0.1"})(),
+        })()
+        context = type("Context", (), {"request": request, "session": None, "protocol_version": "2026-07-28"})()
+        metadata = server._request_metadata(context)
+        self.assertEqual(metadata["actor"], server.hashlib.sha256(b"kevin").hexdigest()[:24])
+
     def test_season_rewards_tool_is_declared_read_only_with_strict_schema(self) -> None:
         tool = server.TOOLS["get_season_rewards"]
         annotations = tool.annotations.model_dump(by_alias=True, exclude_none=True)
@@ -308,7 +420,7 @@ class WowMcpTests(unittest.TestCase):
         self.assertEqual(success["properties"]["provenance"]["const"], "community")
         self.assertEqual(success["properties"]["source"]["const"], "classcodex")
         self.assertIn("lastScrape", success["properties"])
-        self.assertIn("NOT as Blizzard data", guidance.description)
+        self.assertIn("never Blizzard data", guidance.description)
         Draft202012Validator.check_schema(guidance.output_schema)
 
         audit = server.TOOLS["get_gear_audit"]
@@ -322,7 +434,11 @@ class WowMcpTests(unittest.TestCase):
     def test_guidance_arguments_are_validated(self) -> None:
         self.assertEqual(
             server._validate_guidance_arguments({"className": " Paladin ", "spec": "Holy"}),
-            {"className": "paladin", "spec": "holy", "specId": None},
+            {
+                "className": "paladin", "spec": "holy", "specId": None,
+                "activity": None, "heroTalent": None, "encounterId": None,
+                "source": None,
+            },
         )
         for bad in (
             {"className": "paladin"},

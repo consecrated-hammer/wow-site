@@ -1,0 +1,29 @@
+{
+  "name": "consecrated-hammer-web",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "@floating-ui/react": "^0.27.20",
+    "@tanstack/react-table": "^8.21.3",
+    "@vitejs/plugin-react": "^6.0.1",
+    "lucide-react": "^1.32.0",
+    "react": "^19.2.5",
+    "react-dom": "^19.2.3",
+    "react-router-dom": "^7.14.1",
+    "vite": "^8.0.8"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "@tailwindcss/vite": "^4.2.2",
+    "eslint": "^9.39.4",
+    "eslint-plugin-react": "^7.37.5",
+    "globals": "^16.5.0",
+    "tailwindcss": "^4.2.2"
+  }
+}
