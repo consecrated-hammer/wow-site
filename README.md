@@ -77,7 +77,7 @@ labelled tracker tools can update only Consecrated Hammer's local private state;
 they do not change Blizzard or in-game data. The legacy `hammerlink_import_list`
 and `hammerlink_import_get` names remain compatibility aliases.
 
-The authenticated React app documents setup at `/mcp`, including current
+The authenticated React app documents setup at `/mcp-guide`, including current
 ChatGPT and Claude connection steps, suggested prompts, and a collapsed tool
 catalogue. Exact Great Vault state comes from `get_character_inventory`; the
 older inferred `get_great_vault_progress` tool is not advertised.

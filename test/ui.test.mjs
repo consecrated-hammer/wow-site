@@ -38,8 +38,8 @@ test('MCP page publishes the current read-only tool surface', async () => {
 
 test('React shell publishes the MCP guide and HammerLink CurseForge project', async () => {
   const app = await readFrontend('App.jsx');
-  assert.match(app, /<NavLink to="\/mcp">MCP<\/NavLink>/);
-  assert.match(app, /<Route path="\/mcp" element=\{<McpGuide \/>\} \/>/);
+  assert.match(app, /<NavLink to="\/mcp-guide">MCP<\/NavLink>/);
+  assert.match(app, /<Route path="\/mcp-guide" element=\{<McpGuide \/>\} \/>/);
   assert.match(app, /https:\/\/www\.curseforge\.com\/wow\/addons\/hammerlink/);
   assert.match(app, /https:\/\/wow\.batserver\.au\/mcp/);
   assert.match(app, /Suggested prompts/);

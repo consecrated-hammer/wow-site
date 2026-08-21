@@ -299,7 +299,7 @@ function Shell({ children, right = null }) {
           <NavLink to="/tracks">Upgrade tracks</NavLink>
           <NavLink to="/achievements">Achievement tracker</NavLink>
           <NavLink to="/hammerlink">HammerLink</NavLink>
-          <NavLink to="/mcp">MCP</NavLink>
+          <NavLink to="/mcp-guide">MCP</NavLink>
           <span className="site-nav-right"><PalettePicker />{right}</span>
         </nav>
       </header>
@@ -2848,7 +2848,7 @@ export default function App() {
       <Route path="/tracks" element={<Tracks />} />
       <Route path="/achievements" element={<Tracker />} />
       <Route path="/hammerlink" element={<HammerLinkImport />} />
-      <Route path="/mcp" element={<McpGuide />} />
+      <Route path="/mcp-guide" element={<McpGuide />} />
       <Route path="*" element={<Navigate to="/achievements" replace />} />
     </Routes>
   );
