@@ -333,7 +333,7 @@ const mcpCapabilityGroups = [
     note: "Private in-game snapshots belonging to the signed-in account. Read-only.",
     tools: [
       ["list_character_inventories", "List characters with saved HammerLink snapshots."],
-      ["get_character_inventory", "Latest gear, bags, exact Vault state, currencies and owned decor."],
+      ["get_character_inventory", "Latest gear, bags, exact Vault state, currencies, owned decor and current quest log."],
     ],
   },
   {
@@ -605,11 +605,14 @@ function HammerLinkImport() {
   const currencyCaps = snapshot?.currencyCaps || [];
   const decorInventory = snapshot?.decorInventory;
   const decorItems = decorInventory?.items || [];
+  const questLog = snapshot?.questLog;
+  const questEntries = questLog?.entries || [];
   const normalisedQuery = snapshotQuery.trim().toLowerCase();
   const filteredEquipment = useMemo(() => (snapshot?.equipment || []).filter((item) => hammerLinkSearchMatches(item, normalisedQuery)), [snapshot, normalisedQuery]);
   const filteredBagEquipment = useMemo(() => (snapshot?.bagEquipment || []).filter((item) => hammerLinkSearchMatches(item, normalisedQuery)), [snapshot, normalisedQuery]);
   const filteredCurrencyCaps = useMemo(() => currencyCaps.filter((item) => hammerLinkSearchMatches(item, normalisedQuery)), [currencyCaps, normalisedQuery]);
   const filteredDecorItems = useMemo(() => decorItems.filter((item) => hammerLinkSearchMatches(item, normalisedQuery)), [decorItems, normalisedQuery]);
+  const filteredQuestEntries = useMemo(() => questEntries.filter((item) => hammerLinkSearchMatches(item, normalisedQuery)), [questEntries, normalisedQuery]);
   const filteredVaultActivities = useMemo(() => vaultActivities.filter((item) => hammerLinkSearchMatches(item, normalisedQuery)), [vaultActivities, normalisedQuery]);
   const talentMatches = !normalisedQuery || hammerLinkSearchMatches(snapshot?.talents || {}, normalisedQuery);
   const countSummary = (filtered, total, noun) => normalisedQuery ? `${filtered} of ${total} ${noun}` : `${total} ${noun}`;
@@ -659,15 +662,24 @@ function HammerLinkImport() {
                 <article><span>Talents</span><strong>{detail.hasTalentImport ? "Yes" : "—"}</strong><small>{detail.hasTalentImport ? "Active loadout captured" : "Not available"}</small></article>
                 <article><span>Currency caps</span><strong>{detail.currencyCapCount ?? currencyCaps.length}</strong><small>Crests and other limits</small></article>
                 <article><span>Housing decor</span><strong>{detail.decorItemCount ?? decorItems.length}</strong><small>Owned catalog entries</small></article>
+                <article><span>Quest log</span><strong>{detail.questLogCount ?? questEntries.length}</strong><small>Current active quests</small></article>
               </div>
 
-              <label className="hammerlink-snapshot-search"><Search size={16} aria-hidden="true" /><span className="sr-only">Search this snapshot</span><input value={snapshotQuery} onChange={(event) => setSnapshotQuery(event.target.value)} placeholder="Search gear, bags, currencies, decor, Vault or talents" />{snapshotQuery ? <button type="button" onClick={() => setSnapshotQuery("")} aria-label="Clear snapshot search"><X size={15} /></button> : null}</label>
+              <label className="hammerlink-snapshot-search"><Search size={16} aria-hidden="true" /><span className="sr-only">Search this snapshot</span><input value={snapshotQuery} onChange={(event) => setSnapshotQuery(event.target.value)} placeholder="Search gear, bags, currencies, decor, quests, Vault or talents" />{snapshotQuery ? <button type="button" onClick={() => setSnapshotQuery("")} aria-label="Clear snapshot search"><X size={15} /></button> : null}</label>
 
               <HammerLinkSection eyebrow="CHARACTER GEAR" title="Currently equipped" summary={countSummary(filteredEquipment.length, snapshot.equipment?.length || 0, "items")}><HammerLinkGearTable items={filteredEquipment} /></HammerLinkSection>
               <HammerLinkSection eyebrow="BAG SCAN" title="All items in bags" summary={countSummary(filteredBagEquipment.length, snapshot.bagEquipment?.length || 0, "items")} defaultOpen={false}><HammerLinkGearTable items={filteredBagEquipment} bagGear /></HammerLinkSection>
 
               <HammerLinkSection eyebrow="CURRENCY CAPS" title="Crests and capped currencies" summary={countSummary(filteredCurrencyCaps.length, currencyCaps.length, "records")}>
                 {filteredCurrencyCaps.length ? <div className="hammerlink-currency-list">{filteredCurrencyCaps.map((currency) => <div key={currency.currencyID}><strong>{currency.name}</strong><span>{currency.quantity ?? "—"}{currency.maxQuantity ? ` / ${currency.maxQuantity}` : ""}</span><small>{currency.canEarnPerWeek ? `This week ${currency.quantityEarnedThisWeek ?? 0}${currency.maxWeeklyQuantity ? ` / ${currency.maxWeeklyQuantity}` : ""}` : currency.useTotalEarnedForMaxQty ? `Season earned ${currency.totalEarned ?? 0}${currency.maxQuantity ? ` / ${currency.maxQuantity}` : ""}` : "Current client cap data"}</small></div>)}</div> : <p className="hammerlink-empty-row">{normalisedQuery ? "No currency records match this search." : snapshot.exportOptions?.currencyCaps === false ? "Currency caps were excluded in this export." : "No capped currency records were available from the client."}</p>}
+              </HammerLinkSection>
+
+              <HammerLinkSection eyebrow="CURRENT QUEST LOG" title="Active quests and objectives" summary={`${countSummary(filteredQuestEntries.length, questEntries.length, "quests")}${questLog?.truncated ? " · export limit reached" : ""}`}>
+                {filteredQuestEntries.length ? <div className="hammerlink-quest-list">{filteredQuestEntries.map((quest) => <article key={quest.questID}>
+                  <header><div><strong>{quest.title}</strong><small>Quest #{quest.questID}{quest.tag?.name ? ` · ${quest.tag.name}` : ""}{quest.campaignID ? ` · Campaign ${quest.campaignID}` : ""}</small></div><span>{quest.isFailed ? "Failed" : quest.isComplete ? "Ready to turn in" : quest.isHidden ? "Hidden / background" : "In progress"}</span></header>
+                  {quest.objectives?.length ? <ul>{quest.objectives.map((objective, index) => <li key={`${quest.questID}-${index}`} className={objective.finished ? "is-complete" : ""}><span>{objective.text}</span>{objective.numRequired != null ? <small>{objective.numFulfilled ?? 0} / {objective.numRequired}</small> : null}</li>)}</ul> : <p>No objective rows were exposed by the client.</p>}
+                  <footer>{quest.suggestedGroup > 0 ? <span>Suggested group: {quest.suggestedGroup}</span> : null}{quest.waypoint ? <span>Map {quest.waypoint.mapID} · {Math.round(quest.waypoint.x * 100)}, {Math.round(quest.waypoint.y * 100)}</span> : null}{quest.timer ? <span>{Math.max(0, Math.round((quest.timer.totalSeconds - quest.timer.elapsedSeconds) / 60))} min remaining</span> : null}</footer>
+                </article>)}</div> : <p className="hammerlink-empty-row">{normalisedQuery ? "No quests match this search." : snapshot.exportOptions?.questLog === false ? "The quest log was excluded in this export." : questLog?.reason || "No current quest-log entries were available from the client."}</p>}
               </HammerLinkSection>
 
               <HammerLinkSection eyebrow="HOUSING CATALOG" title="Owned decor inventory" summary={`${countSummary(filteredDecorItems.length, decorItems.length, "entries")}${decorInventory?.totalOwnedCount != null ? ` · ${decorInventory.totalOwnedCount} total owned` : ""}${decorInventory?.truncated ? " · export limit reached" : ""}`} defaultOpen={false}>

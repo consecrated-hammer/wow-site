@@ -410,6 +410,8 @@ class AchievementTracker:
         currency_caps = snapshot.get('currencyCaps') if isinstance(snapshot, dict) else []
         decor_inventory = snapshot.get('decorInventory') if isinstance(snapshot, dict) else {}
         decor_items = decor_inventory.get('items') if isinstance(decor_inventory, dict) else []
+        quest_log = snapshot.get('questLog') if isinstance(snapshot, dict) else {}
+        quest_entries = quest_log.get('entries') if isinstance(quest_log, dict) else []
         return {
             'importId': row['id'],
             'characterId': row['character_id'],
@@ -430,6 +432,7 @@ class AchievementTracker:
             'hasTalentImport': bool(row['has_talent_import']),
             'currencyCapCount': len(currency_caps) if isinstance(currency_caps, list) else 0,
             'decorItemCount': len(decor_items) if isinstance(decor_items, list) else 0,
+            'questLogCount': len(quest_entries) if isinstance(quest_entries, list) else 0,
             'equippedItemLevel': row['equipped_item_level'],
             'overallItemLevel': row['overall_item_level'],
             'provenance': 'in_game_export',

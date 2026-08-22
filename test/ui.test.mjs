@@ -46,6 +46,8 @@ test('React shell publishes the MCP guide and HammerLink CurseForge project', as
   assert.match(app, /Leave the client secret empty/);
   assert.match(app, /Do not enter a client secret; leave that field empty/);
   assert.match(app, /Suggested prompts/);
+  assert.match(app, /CURRENT QUEST LOG/);
+  assert.match(app, /Search gear, bags, currencies, decor, quests, Vault or talents/);
   assert.match(app, /<details className="mcp-capabilities">/);
   assert.doesNotMatch(app, /<details className="mcp-capabilities" open/);
   for (const tool of [

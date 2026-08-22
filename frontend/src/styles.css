@@ -395,6 +395,20 @@ a { color: var(--gold); }
 .hammerlink-currency-list strong,.hammerlink-decor-list strong { overflow: hidden; color: var(--text); font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
 .hammerlink-currency-list > div > span,.hammerlink-decor-list > div > span { color: var(--gold); font: 10.5px/1.3 ui-monospace,Menlo,monospace; text-align: right; }
 .hammerlink-currency-list small,.hammerlink-decor-list small { grid-column: 1 / -1; color: rgba(255,255,255,.34); font: 9.5px/1.25 ui-monospace,Menlo,monospace; }
+.hammerlink-quest-list { display: grid; }
+.hammerlink-quest-list > article { padding: 12px 14px; border-bottom: 1px solid var(--hairline-soft); }
+.hammerlink-quest-list > article:last-child { border-bottom: 0; }
+.hammerlink-quest-list header { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
+.hammerlink-quest-list header > div { display: grid; gap: 3px; }
+.hammerlink-quest-list header strong { color: var(--text-hi); font-size: 12px; font-weight: 600; }
+.hammerlink-quest-list header small,.hammerlink-quest-list footer { color: rgba(255,255,255,.35); font: 9.5px/1.3 ui-monospace,Menlo,monospace; }
+.hammerlink-quest-list header > span { flex: 0 0 auto; color: var(--gold); font-size: 10.5px; }
+.hammerlink-quest-list ul { display: grid; gap: 5px; margin: 10px 0 0; padding: 0; list-style: none; }
+.hammerlink-quest-list li { display: flex; justify-content: space-between; gap: 12px; color: var(--text-muted); font-size: 11px; }
+.hammerlink-quest-list li.is-complete { opacity: .55; text-decoration: line-through; }
+.hammerlink-quest-list li small { flex: 0 0 auto; color: var(--text); font: 10px/1.3 ui-monospace,Menlo,monospace; }
+.hammerlink-quest-list article > p { margin: 9px 0 0; color: var(--text-muted); font-size: 10.5px; }
+.hammerlink-quest-list footer { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 9px; }
 .hammerlink-talent-code { display: block; max-height: 170px; overflow: auto; padding: 13px 14px; color: var(--text-muted); font: 10px/1.55 ui-monospace,Menlo,monospace; overflow-wrap: anywhere; }
 .hammerlink-copy { display: inline-flex; align-items: center; gap: 6px; margin: 10px 14px 0; padding: 6px 9px; border: 1px solid var(--field-bc); border-radius: 4px; background: transparent; color: var(--gold); font-size: 10.5px; }
 

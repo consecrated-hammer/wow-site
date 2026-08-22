@@ -44,8 +44,8 @@ one place: `site/season-data.js`.
 The authenticated `/hammerlink` page validates an addon's `HL1:` export and
 stores the latest snapshot per account and character. It shows equipped gear,
 all occupied bag items with rich metadata and stats where the client provides
-them, Great Vault activity, timestamps, and the
-active talent import. The browser API derives its user key from the trusted
+them, Great Vault activity, the current quest log and objective progress,
+timestamps, and the active talent import. The browser API derives its user key from the trusted
 Authelia/OAuth identity header; callers cannot supply or query another user ID.
 
 The character lookup uses Blizzard's server-to-server client credentials flow.

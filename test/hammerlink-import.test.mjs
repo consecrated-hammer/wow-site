@@ -235,3 +235,47 @@ test('rejects unbounded or malformed decor inventory', async () => {
     return true;
   });
 });
+
+test('accepts a bounded current quest log with progress and waypoint facts', async () => {
+  const legacy = parseHammerLinkExport(await fixture(), { now });
+  const snapshot = {
+    format: 3,
+    capturedAt: legacy.capturedAt,
+    character: legacy.character,
+    exportOptions: { questLog: true },
+    questLog: {
+      available: true,
+      capturedAt: legacy.capturedAt,
+      totalQuests: 2,
+      truncated: false,
+      entries: [{
+        questID: 9001, logIndex: 2, title: 'A Dark Errand', level: 80,
+        difficultyLevel: 80, suggestedGroup: 3, frequency: 1,
+        campaignID: 12, questClassification: 2, watchType: 1,
+        isTask: false, isBounty: false, isStory: true, isHidden: false,
+        isAutoComplete: false, isComplete: false, isFailed: false,
+        objectives: [{ text: 'Collect 2/5 void shards', type: 'item', finished: false, numFulfilled: 2, numRequired: 5, objectiveType: 1 }],
+        tag: { name: 'Campaign', id: 128, isElite: false },
+        waypoint: { mapID: 2395, x: 0.42, y: 0.73 },
+        timer: { totalSeconds: 3600, elapsedSeconds: 1200 },
+      }],
+    },
+  };
+  const decoded = parseHammerLinkExport(exportSnapshot(snapshot), { now });
+  assert.equal(decoded.questLog.entries[0].objectives[0].numFulfilled, 2);
+  assert.deepEqual(decoded.questLog.entries[0].waypoint, { mapID: 2395, x: 0.42, y: 0.73 });
+  assert.equal(decoded.exportOptions.questLog, true);
+});
+
+test('rejects duplicate or unbounded quest-log data', async () => {
+  const legacy = parseHammerLinkExport(await fixture(), { now });
+  legacy.format = 3;
+  legacy.exportOptions = { questLog: true };
+  const quest = { questID: 1, title: 'Duplicate', objectives: [] };
+  legacy.questLog = { available: true, entries: [quest, { ...quest }] };
+  assert.throws(() => parseHammerLinkExport(exportSnapshot(legacy), { now }), (error) => {
+    assert.ok(error instanceof HammerLinkImportError);
+    assert.equal(error.code, 'invalid-schema');
+    return true;
+  });
+});
