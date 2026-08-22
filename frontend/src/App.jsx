@@ -309,6 +309,7 @@ function Shell({ children, right = null }) {
 }
 
 const mcpEndpoint = "https://wow.batserver.au/mcp";
+const mcpOauthClientId = "wow-mcp-shared";
 const mcpCapabilityGroups = [
   {
     title: "Character and progression",
@@ -391,6 +392,7 @@ function McpGuide() {
             <span>REMOTE MCP SERVER</span>
             <code>{mcpEndpoint}</code>
             <button type="button" onClick={copyEndpoint}>{copied ? <Check size={15} /> : <Copy size={15} />}{copied ? "Copied" : "Copy URL"}</button>
+            <div className="mcp-oauth-config"><span>OAuth client ID</span><code>{mcpOauthClientId}</code><small>Client secret: leave empty</small></div>
           </div>
         </section>
 
@@ -407,6 +409,7 @@ function McpGuide() {
               <ol>
                 <li>Open <strong>Settings → Apps</strong>. If required by your plan, enable <strong>Developer mode</strong> in Advanced Settings.</li>
                 <li>Choose <strong>Create</strong>, name the app <strong>Consecrated Hammer</strong>, and paste the MCP URL above.</li>
+                <li>For OAuth, enter client ID <code>{mcpOauthClientId}</code>. <strong>Leave the client secret empty</strong>—this is a public OAuth client and has no secret.</li>
                 <li>Scan the tools, complete the Authelia sign-in, then create the app.</li>
                 <li>In a new chat, select Consecrated Hammer from the tools menu for the message that needs fresh data.</li>
               </ol>
@@ -418,8 +421,9 @@ function McpGuide() {
               <header><span className="mcp-service-mark">C</span><div><h3>Claude</h3><p>Custom connector · web or desktop</p></div></header>
               <ol>
                 <li>Open <strong>Settings → Connectors</strong> and choose <strong>Add custom connector</strong>.</li>
-                <li>Name it <strong>Consecrated Hammer</strong>, paste the MCP URL above, and choose <strong>Add</strong>.</li>
-                <li>Select <strong>Connect</strong> and complete the Authelia sign-in.</li>
+                <li>Name it <strong>Consecrated Hammer</strong> and paste the MCP URL above.</li>
+                <li>Enter OAuth client ID <code>{mcpOauthClientId}</code>. <strong>Do not enter a client secret; leave that field empty.</strong></li>
+                <li>Choose <strong>Add</strong>, then <strong>Connect</strong> and complete the Authelia sign-in.</li>
                 <li>In chat, open <strong>Search and tools</strong> and enable the connector or only the tools you need.</li>
               </ol>
               <p className="mcp-plan-note">Remote custom connectors are available on Claude Pro, Max, Team and Enterprise. Team and Enterprise connectors must first be added by an owner.</p>

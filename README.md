@@ -79,7 +79,8 @@ and `hammerlink_import_get` names remain compatibility aliases.
 
 The authenticated React app documents setup at `/mcp-guide`, including current
 ChatGPT and Claude connection steps, suggested prompts, and a collapsed tool
-catalogue. Exact Great Vault state comes from `get_character_inventory`; the
+catalogue. Both clients use the public OAuth client ID `wow-mcp-shared` with no
+client secret. Exact Great Vault state comes from `get_character_inventory`; the
 older inferred `get_great_vault_progress` tool is not advertised.
 
 The MCP sidecar forwards to the same guarded internal JSON routes used by the

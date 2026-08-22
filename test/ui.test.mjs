@@ -42,6 +42,9 @@ test('React shell publishes the MCP guide and HammerLink CurseForge project', as
   assert.match(app, /<Route path="\/mcp-guide" element=\{<McpGuide \/>\} \/>/);
   assert.match(app, /https:\/\/www\.curseforge\.com\/wow\/addons\/hammerlink/);
   assert.match(app, /https:\/\/wow\.batserver\.au\/mcp/);
+  assert.match(app, /const mcpOauthClientId = "wow-mcp-shared"/);
+  assert.match(app, /Leave the client secret empty/);
+  assert.match(app, /Do not enter a client secret; leave that field empty/);
   assert.match(app, /Suggested prompts/);
   assert.match(app, /<details className="mcp-capabilities">/);
   assert.doesNotMatch(app, /<details className="mcp-capabilities" open/);
