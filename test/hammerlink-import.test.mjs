@@ -279,3 +279,15 @@ test('rejects duplicate or unbounded quest-log data', async () => {
     return true;
   });
 });
+
+test('accepts a blank-labelled Retail quest objective when progress is present', async () => {
+  const legacy = parseHammerLinkExport(await fixture(), { now });
+  legacy.format = 3;
+  legacy.exportOptions = { questLog: true };
+  legacy.questLog = {
+    available: true,
+    entries: [{ questID: 44, title: 'Unlabelled progress', objectives: [{ text: '', numFulfilled: 1, numRequired: 3 }] }],
+  };
+  const decoded = parseHammerLinkExport(exportSnapshot(legacy), { now });
+  assert.equal(decoded.questLog.entries[0].objectives[0].text, '');
+});
