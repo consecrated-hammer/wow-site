@@ -381,7 +381,7 @@ class AchievementTrackerTests(unittest.TestCase):
             snapshot = {
                 'format': 2, 'capturedAt': 1787200000,
                 'character': {'name':'Bianca','realm':'DathRemar','region':1,'class':'PALADIN','level':80},
-                'exportOptions': {'equipment':False,'bagItems':False,'talents':False,'vault':False,'currencyCaps':True,'decorInventory':True,'questLog':True},
+                'exportOptions': {'equipment':False,'bagItems':False,'talents':False,'vault':False,'currencyCaps':True,'decorInventory':True,'questLog':True,'professionRecipes':True},
                 'currencyCaps': [
                     {'currencyID':9000,'name':'Other Token','quantity':1},
                     {'currencyID':3445,'name':'Hero Mistcrest','quantity':45},
@@ -394,11 +394,13 @@ class AchievementTrackerTests(unittest.TestCase):
                 ],
                 'decorInventory': {'available':True,'items':[{'decorID':77,'name':'Warm Chair','storedCount':2,'placedCount':1}]},
                 'questLog': {'available':True,'totalQuests':1,'entries':[{'questID':123,'title':'A Current Quest','objectives':[]}]},
+                'professionRecipes': {'available':True,'professions':[{'skillLineID':755,'name':'Classic Jewelcrafting','recipes':[{'recipeID':1261659,'name':'Ironforge Chandelier','learned':True}]}]},
             }
             tracker.save_hammerlink_import('bianca', character, snapshot)
             summary = tracker.list_hammerlink_imports('bianca')['imports'][0]
             detail = tracker.hammerlink_import('bianca', character)
             self.assertEqual((summary['equipmentCount'], summary['bagItemCount'], summary['currencyCapCount'], summary['decorItemCount'], summary['questLogCount']), (0, 0, 8, 1, 1))
+            self.assertEqual((summary['professionRecipeCount'], summary['professionSkillLineCount']), (1, 1))
             self.assertFalse(detail['snapshot']['exportOptions']['vault'])
             self.assertEqual(detail['snapshot']['decorInventory']['items'][0]['storedCount'], 2)
             self.assertEqual(

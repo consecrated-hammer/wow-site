@@ -291,3 +291,29 @@ test('accepts a blank-labelled Retail quest objective when progress is present',
   const decoded = parseHammerLinkExport(exportSnapshot(legacy), { now });
   assert.equal(decoded.questLog.entries[0].objectives[0].text, '');
 });
+
+test('accepts learned profession recipes as positive cached observations', async () => {
+  const legacy = parseHammerLinkExport(await fixture(), { now });
+  const snapshot = {
+    format: 3, capturedAt: legacy.capturedAt, character: legacy.character,
+    exportOptions: { professionRecipes: true },
+    professionRecipes: {
+      available: true, capturedAt: legacy.capturedAt, truncated: false,
+      professions: [{ skillLineID: 755, professionID: 755, name: 'Classic Jewelcrafting', skillLevel: 100, maxSkillLevel: 100, source: 'all', recipes: [{ recipeID: 1261659, name: 'Ironforge Chandelier', learned: true }] }],
+    },
+  };
+  const decoded = parseHammerLinkExport(exportSnapshot(snapshot), { now });
+  assert.equal(decoded.professionRecipes.professions[0].recipes[0].name, 'Ironforge Chandelier');
+});
+
+test('rejects an unlearned or duplicate cached profession recipe', async () => {
+  const legacy = parseHammerLinkExport(await fixture(), { now });
+  legacy.format = 3;
+  legacy.exportOptions = { professionRecipes: true };
+  legacy.professionRecipes = { available: true, professions: [{ skillLineID: 755, name: 'Jewelcrafting', recipes: [{ recipeID: 1, name: 'No', learned: false }] }] };
+  assert.throws(() => parseHammerLinkExport(exportSnapshot(legacy), { now }), (error) => {
+    assert.ok(error instanceof HammerLinkImportError);
+    assert.equal(error.code, 'invalid-schema');
+    return true;
+  });
+});

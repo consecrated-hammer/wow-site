@@ -66,6 +66,8 @@ class WowMcpTests(unittest.TestCase):
             self.assertIn("authoritative", server.TOOLS["get_character_inventory"].description)
             self.assertIn("Adventurer, Veteran, Champion", server.TOOLS["get_character_inventory"].description)
             self.assertIn("quest log", server.TOOLS["get_character_inventory"].description)
+            self.assertIn("learned profession recipes", server.TOOLS["get_character_inventory"].description)
+            self.assertIn("unknown, not evidence", server.TOOLS["get_character_inventory"].description)
             self.assertTrue(anonymous_error)
             self.assertIn("authentication", anonymous["message"])
 
