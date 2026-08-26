@@ -510,6 +510,14 @@ function hammerLinkSearchMatches(value, query) {
   return !query || JSON.stringify(value).toLowerCase().includes(query);
 }
 
+function hammerLinkCurrencyCapDetails(currency) {
+  const details = [];
+  if (currency.canEarnPerWeek && currency.maxWeeklyQuantity > 0) details.push(`Weekly cap progress ${currency.quantityEarnedThisWeek ?? 0} / ${currency.maxWeeklyQuantity}`);
+  if (currency.useTotalEarnedForMaxQty && currency.maxQuantity > 0) details.push(`Season-cap progress ${currency.totalEarned ?? 0} / ${currency.maxQuantity}`);
+  else if (currency.maxQuantity > 0) details.push(`Holding cap ${currency.maxQuantity}`);
+  return details.join(" · ") || "No current cap progress exposed by the client";
+}
+
 function HammerLinkSection({ eyebrow, title, summary, defaultOpen = false, children }) {
   const [open, setOpen] = useState(defaultOpen);
   return <details className="hammerlink-section" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
@@ -607,6 +615,8 @@ function HammerLinkImport() {
   const decorItems = decorInventory?.items || [];
   const questLog = snapshot?.questLog;
   const questEntries = questLog?.entries || [];
+  const currentSpellbook = snapshot?.currentSpellbook;
+  const currentSpells = currentSpellbook?.spells || [];
   const professionRecipes = snapshot?.professionRecipes;
   const professionLines = professionRecipes?.professions || [];
   const professionRecipeCount = professionLines.reduce((count, line) => count + (line.recipes?.length || 0), 0);
@@ -616,6 +626,7 @@ function HammerLinkImport() {
   const filteredCurrencyCaps = useMemo(() => currencyCaps.filter((item) => hammerLinkSearchMatches(item, normalisedQuery)), [currencyCaps, normalisedQuery]);
   const filteredDecorItems = useMemo(() => decorItems.filter((item) => hammerLinkSearchMatches(item, normalisedQuery)), [decorItems, normalisedQuery]);
   const filteredQuestEntries = useMemo(() => questEntries.filter((item) => hammerLinkSearchMatches(item, normalisedQuery)), [questEntries, normalisedQuery]);
+  const filteredCurrentSpells = useMemo(() => currentSpells.filter((item) => hammerLinkSearchMatches(item, normalisedQuery)), [currentSpells, normalisedQuery]);
   const filteredProfessionLines = useMemo(() => professionLines.map((line) => {
     const { recipes, ...lineDetails } = line;
     return { ...line, recipes: (recipes || []).filter((recipe) => hammerLinkSearchMatches({ ...lineDetails, recipe }, normalisedQuery)) };
@@ -627,7 +638,7 @@ function HammerLinkImport() {
     <Shell>
       <main className="hammerlink-page">
         <section className="hammerlink-masthead">
-          <div><span className="ledger-eyebrow">LIVE ADDON SNAPSHOT</span><h1>HammerLink import</h1><p>Bring this character’s selected in-game gear, bags, talents, Vault state, currency caps, Housing decor and cached learned recipes into your private account.</p></div>
+          <div><span className="ledger-eyebrow">LIVE ADDON SNAPSHOT</span><h1>HammerLink import</h1><p>Bring this character’s selected in-game gear, bags, spellbook, talents, Vault state, currencies, Housing decor and cached profession observations into your private account.</p></div>
           <a className="hammerlink-project-link" href="https://www.curseforge.com/wow/addons/hammerlink" target="_blank" rel="noreferrer"><span><strong>Get HammerLink</strong><small>CurseForge project</small></span><ExternalLink size={16} aria-hidden="true" /></a>
         </section>
 
@@ -670,20 +681,27 @@ function HammerLinkImport() {
                 <article><span>Currency caps</span><strong>{detail.currencyCapCount ?? currencyCaps.length}</strong><small>Crests and other limits</small></article>
                 <article><span>Housing decor</span><strong>{detail.decorItemCount ?? decorItems.length}</strong><small>Owned catalog entries</small></article>
                 <article><span>Quest log</span><strong>{detail.questLogCount ?? questEntries.length}</strong><small>Current active quests</small></article>
-                <article><span>Learned recipes</span><strong>{detail.professionRecipeCount ?? professionRecipeCount}</strong><small>{detail.professionSkillLineCount ?? professionLines.length} cached skill lines</small></article>
+                <article><span>Current spells</span><strong>{detail.currentSpellCount ?? currentSpells.length}</strong><small>Client-exposed spellbook</small></article>
+                <article><span>Profession entries</span><strong>{detail.professionRecipeCount ?? professionRecipeCount}</strong><small>{detail.professionSkillLineCount ?? professionLines.length} cached skill lines</small></article>
               </div>
 
-              <label className="hammerlink-snapshot-search"><Search size={16} aria-hidden="true" /><span className="sr-only">Search this snapshot</span><input value={snapshotQuery} onChange={(event) => setSnapshotQuery(event.target.value)} placeholder="Search gear, bags, currencies, decor, recipes, quests, Vault or talents" />{snapshotQuery ? <button type="button" onClick={() => setSnapshotQuery("")} aria-label="Clear snapshot search"><X size={15} /></button> : null}</label>
+              <label className="hammerlink-snapshot-search"><Search size={16} aria-hidden="true" /><span className="sr-only">Search this snapshot</span><input value={snapshotQuery} onChange={(event) => setSnapshotQuery(event.target.value)} placeholder="Search gear, bags, spells, currencies, decor, professions, quests, Vault or talents" />{snapshotQuery ? <button type="button" onClick={() => setSnapshotQuery("")} aria-label="Clear snapshot search"><X size={15} /></button> : null}</label>
 
               <HammerLinkSection eyebrow="CHARACTER GEAR" title="Currently equipped" summary={countSummary(filteredEquipment.length, snapshot.equipment?.length || 0, "items")}><HammerLinkGearTable items={filteredEquipment} /></HammerLinkSection>
               <HammerLinkSection eyebrow="BAG SCAN" title="All items in bags" summary={countSummary(filteredBagEquipment.length, snapshot.bagEquipment?.length || 0, "items")} defaultOpen={false}><HammerLinkGearTable items={filteredBagEquipment} bagGear /></HammerLinkSection>
 
               <HammerLinkSection eyebrow="CURRENCY CAPS" title="Crests and capped currencies" summary={countSummary(filteredCurrencyCaps.length, currencyCaps.length, "records")}>
-                {filteredCurrencyCaps.length ? <div className="hammerlink-currency-list">{filteredCurrencyCaps.map((currency) => <div key={currency.currencyID}><strong>{currency.name}</strong><span>{currency.quantity ?? "—"}{currency.maxQuantity ? ` / ${currency.maxQuantity}` : ""}</span><small>{currency.canEarnPerWeek ? `This week ${currency.quantityEarnedThisWeek ?? 0}${currency.maxWeeklyQuantity ? ` / ${currency.maxWeeklyQuantity}` : ""}` : currency.useTotalEarnedForMaxQty ? `Season earned ${currency.totalEarned ?? 0}${currency.maxQuantity ? ` / ${currency.maxQuantity}` : ""}` : "Current client cap data"}</small></div>)}</div> : <p className="hammerlink-empty-row">{normalisedQuery ? "No currency records match this search." : snapshot.exportOptions?.currencyCaps === false ? "Currency caps were excluded in this export." : "No capped currency records were available from the client."}</p>}
+                {filteredCurrencyCaps.length ? <div className="hammerlink-currency-list">{filteredCurrencyCaps.map((currency) => <div key={currency.currencyID}><strong>{currency.name}</strong><span>{currency.quantity ?? "—"} current</span><small>{hammerLinkCurrencyCapDetails(currency)}</small></div>)}</div> : <p className="hammerlink-empty-row">{normalisedQuery ? "No currency records match this search." : snapshot.exportOptions?.currencyCaps === false ? "Currency caps were excluded in this export." : "No capped currency records were available from the client."}</p>}
               </HammerLinkSection>
 
-              <HammerLinkSection eyebrow="CACHED PROFESSIONS" title="Learned profession recipes" summary={`${normalisedQuery ? `${filteredProfessionLines.reduce((count, line) => count + line.recipes.length, 0)} of ${professionRecipeCount}` : professionRecipeCount} recipes · ${professionLines.length} skill lines${professionRecipes?.truncated ? " · export limit reached" : ""}`}>
-                {filteredProfessionLines.length ? <div className="hammerlink-recipe-list">{filteredProfessionLines.map((line) => <article key={line.skillLineID}><header><div><strong>{line.name}</strong><small>{line.skillLevel != null ? `${line.skillLevel}${line.maxSkillLevel != null ? ` / ${line.maxSkillLevel}` : ""}` : "Skill level unavailable"}{line.source === "filtered" ? " · client filtered list" : ""}</small></div><span>{line.recipes.length} learned</span></header><ul>{line.recipes.map((recipe) => <li key={recipe.recipeID}><span>{recipe.name}</span><small>Recipe #{recipe.recipeID}</small></li>)}</ul></article>)}</div> : <p className="hammerlink-empty-row">{normalisedQuery ? "No learned recipes match this search." : snapshot.exportOptions?.professionRecipes === false ? "Profession recipes were excluded in this export." : professionRecipes?.reason || "No learned recipes have been cached yet. Open each profession window once in game, then export again; unopened professions are unknown."}</p>}
+              <HammerLinkSection eyebrow="CURRENT SPELLBOOK" title="Client-exposed spells and abilities" summary={`${countSummary(filteredCurrentSpells.length, currentSpells.length, "spells")}${currentSpellbook?.truncated ? " · export limit reached" : ""}`} defaultOpen={false}>
+                {filteredCurrentSpells.length ? <div className="hammerlink-spell-list">{filteredCurrentSpells.map((spell) => <div key={spell.spellID}><strong>{spell.name}</strong><span>{spell.skillLine || "Unlabelled skill line"}</span><small>Spell #{spell.spellID}{spell.isPassive ? " · passive" : ""}{spell.isOffSpec ? " · marked off-spec" : ""}{spell.source === "flyout" ? " · flyout" : ""}</small></div>)}</div> : <p className="hammerlink-empty-row">{normalisedQuery ? "No current spells match this search." : snapshot.exportOptions?.currentSpellbook === false ? "The current spellbook was excluded in this export." : currentSpellbook?.reason || "No current spellbook entries were available from the client."}</p>}
+                <p className="hammerlink-scope-note">Entries currently exposed in this character’s spellbook. The client can include marked off-spec abilities; hidden and inactive-specialisation coverage may be incomplete.</p>
+              </HammerLinkSection>
+
+              <HammerLinkSection eyebrow="CACHED PROFESSIONS" title="Learned recipes and techniques" summary={`${normalisedQuery ? `${filteredProfessionLines.reduce((count, line) => count + line.recipes.length, 0)} of ${professionRecipeCount}` : professionRecipeCount} entries · ${professionLines.length} skill lines${professionRecipes?.truncated ? " · export limit reached" : ""}`}>
+                {filteredProfessionLines.length ? <div className="hammerlink-recipe-list">{filteredProfessionLines.map((line) => <article key={line.skillLineID}><header><div><strong>{line.name}</strong><small>{line.skillLevel != null ? `${line.skillLevel}${line.maxSkillLevel != null ? ` / ${line.maxSkillLevel}` : ""}` : "Skill level unavailable"}{line.source === "filtered" ? " · client filtered list" : ""}</small></div><span>{line.recipes.length} observed</span></header><ul>{line.recipes.map((recipe) => <li key={recipe.recipeID}><span>{recipe.name}</span><small>Entry #{recipe.recipeID}</small></li>)}</ul></article>)}</div> : <p className="hammerlink-empty-row">{normalisedQuery ? "No learned profession entries match this search." : snapshot.exportOptions?.professionRecipes === false ? "Profession entries were excluded in this export." : professionRecipes?.reason || "No profession entries have been cached yet. Open each profession window once in game, then export again; unopened professions are unknown."}</p>}
+                <p className="hammerlink-scope-note">Cached positive observations from Retail’s profession list, including recipes, gathering techniques and bonuses. Missing entries remain unknown; reopen a profession after learning something new.</p>
               </HammerLinkSection>
 
               <HammerLinkSection eyebrow="CURRENT QUEST LOG" title="Active quests and objectives" summary={`${countSummary(filteredQuestEntries.length, questEntries.length, "quests")}${questLog?.truncated ? " · export limit reached" : ""}`}>

@@ -419,6 +419,13 @@ a { color: var(--gold); }
 .hammerlink-recipe-list header > span { flex: 0 0 auto; color: var(--gold); font-size: 10.5px; }
 .hammerlink-recipe-list ul { display: grid; gap: 5px; margin: 10px 0 0; padding: 0; list-style: none; }
 .hammerlink-recipe-list li { display: flex; justify-content: space-between; gap: 12px; color: var(--text-muted); font-size: 11px; }
+.hammerlink-spell-list { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); }
+.hammerlink-spell-list > div { display: grid; grid-template-columns: minmax(0,1fr) max-content; gap: 4px 12px; padding: 10px 14px; border-bottom: 1px solid var(--hairline-soft); }
+.hammerlink-spell-list > div:nth-child(odd) { border-right: 1px solid var(--hairline-soft); }
+.hammerlink-spell-list strong { overflow: hidden; color: var(--text-hi); font-size: 11px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.hammerlink-spell-list > div > span { color: var(--gold); font-size: 10.5px; text-align: right; }
+.hammerlink-spell-list small { grid-column: 1 / -1; color: rgba(255,255,255,.35); font: 9.5px/1.3 ui-monospace,Menlo,monospace; }
+.hammerlink-scope-note { margin: 0; padding: 11px 14px; border-top: 1px solid var(--hairline-soft); color: var(--text-muted); font-size: 10.5px; line-height: 1.5; }
 .hammerlink-talent-code { display: block; max-height: 170px; overflow: auto; padding: 13px 14px; color: var(--text-muted); font: 10px/1.55 ui-monospace,Menlo,monospace; overflow-wrap: anywhere; }
 .hammerlink-copy { display: inline-flex; align-items: center; gap: 6px; margin: 10px 14px 0; padding: 6px 9px; border: 1px solid var(--field-bc); border-radius: 4px; background: transparent; color: var(--gold); font-size: 10.5px; }
 
@@ -496,6 +503,8 @@ a { color: var(--gold); }
   .hammerlink-layout { grid-template-columns: 285px minmax(0,1fr); }
   .hammerlink-summary-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
   .hammerlink-lower-grid { grid-template-columns: 1fr; }
+  .hammerlink-spell-list { grid-template-columns: 1fr; }
+  .hammerlink-spell-list > div:nth-child(odd) { border-right: 0; }
   .mcp-masthead { align-items: flex-start; flex-direction: column; }
   .mcp-endpoint { width: 100%; min-width: 0; }
   .mcp-capability-groups { grid-template-columns: 1fr; }

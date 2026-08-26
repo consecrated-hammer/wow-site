@@ -122,13 +122,22 @@ test('rejects duplicate bag locations', async () => {
   });
 });
 
-test('accepts option-aware exports with currency caps and owned housing decor', async () => {
+test('accepts option-aware exports with a current spellbook, currency caps and owned housing decor', async () => {
   const legacy = parseHammerLinkExport(await fixture(), { now });
   const snapshot = {
     format: 2,
     capturedAt: legacy.capturedAt,
     character: legacy.character,
-    exportOptions: { equipment: false, bagItems: false, talents: false, vault: false, currencyCaps: true, decorInventory: true },
+    exportOptions: { equipment: false, bagItems: false, currentSpellbook: true, talents: false, vault: false, currencyCaps: true, decorInventory: true },
+    currentSpellbook: {
+      available: true, capturedAt: legacy.capturedAt,
+      scope: 'current_character_active_specialization', truncated: false,
+      spells: [
+        { spellID: 17364, name: 'Stormstrike', skillLine: 'Enhancement', source: 'spellbook', isPassive: false, isOffSpec: false },
+        { spellID: 51490, name: 'Thunderstorm', skillLine: 'Elemental', source: 'spellbook', isPassive: false, isOffSpec: true },
+        { spellID: 403092, name: 'Aerial Halt', skillLine: 'General', source: 'flyout', isPassive: false, isOffSpec: false },
+      ],
+    },
     currencyCaps: [{
       currencyID: 3284, name: 'Gilded Crest', quantity: 42, maxQuantity: 90,
       maxWeeklyQuantity: 30, quantityEarnedThisWeek: 12, totalEarned: 312,
@@ -141,8 +150,28 @@ test('accepts option-aware exports with currency caps and owned housing decor', 
   };
   const decoded = parseHammerLinkExport(exportSnapshot(snapshot), { now });
   assert.equal(decoded.equipment, undefined);
+  assert.equal(decoded.currentSpellbook.spells[1].isOffSpec, true);
+  assert.equal(decoded.currentSpellbook.spells[2].source, 'flyout');
   assert.equal(decoded.currencyCaps[0].quantityEarnedThisWeek, 12);
   assert.equal(decoded.decorInventory.items[0].placedCount, 1);
+});
+
+test('rejects duplicate current-spellbook IDs', async () => {
+  const snapshot = parseHammerLinkExport(await fixture(), { now });
+  snapshot.format = 3;
+  snapshot.exportOptions = { currentSpellbook: true };
+  snapshot.currentSpellbook = {
+    available: true,
+    spells: [
+      { spellID: 17364, name: 'Stormstrike' },
+      { spellID: 17364, name: 'Stormstrike again' },
+    ],
+  };
+  assert.throws(() => parseHammerLinkExport(exportSnapshot(snapshot), { now }), (error) => {
+    assert.ok(error instanceof HammerLinkImportError);
+    assert.equal(error.code, 'invalid-schema');
+    return true;
+  });
 });
 
 test('accepts a large valid Housing catalog and reports an explicit decompressed-size limit', () => {

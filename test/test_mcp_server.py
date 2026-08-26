@@ -37,9 +37,10 @@ class WowMcpTests(unittest.TestCase):
                 "character": {"name":"Reilly","realm":"DathRemar","region":1,"class":"PALADIN","level":80},
                 "equipment": [], "talents": {"importString": None},
                 "currencyCaps": [
-                    {"currencyID":3509,"name":"Tidal Spark Dust","quantity":3},
+                    {"currencyID":3509,"name":"Tidal Spark Dust","quantity":3,"totalEarned":3,"maxQuantity":5,"useTotalEarnedForMaxQty":True},
                     {"currencyID":3442,"name":"Adventurer Mistcrest","quantity":149},
                 ],
+                "currentSpellbook": {"available":True,"spells":[{"spellID":17364,"name":"Stormstrike","skillLine":"Enhancement"}]},
                 "vault": {"capturedAt":1787200000,"activities":[{"type":6,"index":1,"threshold":2,"progress":4}]},
             }
             tracker.save_hammerlink_import("bianca", character, {**base, "bagEquipment": [{"bag":0,"slot":1,"itemID":1,"link":"Bianca"}]})
@@ -56,6 +57,7 @@ class WowMcpTests(unittest.TestCase):
             self.assertEqual(detail["snapshot"]["vault"]["activities"][0]["displayProgress"], 2)
             self.assertEqual(detail["snapshot"]["vault"]["activities"][0]["progress"], 4)
             self.assertEqual([item["currencyID"] for item in detail["snapshot"]["currencyCaps"]], [3442, 3509])
+            self.assertEqual(detail["snapshot"]["currentSpellbook"]["spells"][0]["name"], "Stormstrike")
             self.assertEqual(legacy["snapshot"]["bagEquipment"][0]["itemID"], 2)
             self.assertFalse(legacy_error)
             self.assertEqual(detail["provenance"], "in_game_export")
@@ -66,7 +68,10 @@ class WowMcpTests(unittest.TestCase):
             self.assertIn("authoritative", server.TOOLS["get_character_inventory"].description)
             self.assertIn("Adventurer, Veteran, Champion", server.TOOLS["get_character_inventory"].description)
             self.assertIn("quest log", server.TOOLS["get_character_inventory"].description)
-            self.assertIn("learned profession recipes", server.TOOLS["get_character_inventory"].description)
+            self.assertIn("current spellbook", server.TOOLS["get_character_inventory"].description)
+            self.assertIn("recipes, gathering techniques and bonuses", server.TOOLS["get_character_inventory"].description)
+            self.assertIn("totalEarned/maxQuantity", server.TOOLS["get_character_inventory"].description)
+            self.assertIn("current wallet amount", server.TOOLS["get_character_inventory"].description)
             self.assertIn("unknown, not evidence", server.TOOLS["get_character_inventory"].description)
             self.assertTrue(anonymous_error)
             self.assertIn("authentication", anonymous["message"])

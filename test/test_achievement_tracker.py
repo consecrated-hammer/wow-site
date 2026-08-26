@@ -381,17 +381,18 @@ class AchievementTrackerTests(unittest.TestCase):
             snapshot = {
                 'format': 2, 'capturedAt': 1787200000,
                 'character': {'name':'Bianca','realm':'DathRemar','region':1,'class':'PALADIN','level':80},
-                'exportOptions': {'equipment':False,'bagItems':False,'talents':False,'vault':False,'currencyCaps':True,'decorInventory':True,'questLog':True,'professionRecipes':True},
+                'exportOptions': {'equipment':False,'bagItems':False,'currentSpellbook':True,'talents':False,'vault':False,'currencyCaps':True,'decorInventory':True,'questLog':True,'professionRecipes':True},
                 'currencyCaps': [
                     {'currencyID':9000,'name':'Other Token','quantity':1},
                     {'currencyID':3445,'name':'Hero Mistcrest','quantity':45},
                     {'currencyID':3509,'name':'Tidal Spark Dust','quantity':3},
                     {'currencyID':3442,'name':'Adventurer Mistcrest','quantity':149},
                     {'currencyID':3418,'name':'Nebulous Voidcore','quantity':0},
-                    {'currencyID':3444,'name':'Champion Mistcrest','quantity':80},
+                    {'currencyID':3444,'name':'Champion Mistcrest','quantity':30,'totalEarned':10,'maxQuantity':300,'useTotalEarnedForMaxQty':True},
                     {'currencyID':3443,'name':'Veteran Mistcrest','quantity':110},
                     {'currencyID':3446,'name':'Myth Mistcrest','quantity':10},
                 ],
+                'currentSpellbook': {'available':True,'scope':'current_character_active_specialization','spells':[{'spellID':17364,'name':'Stormstrike','skillLine':'Enhancement'},{'spellID':51490,'name':'Thunderstorm','skillLine':'Elemental','isOffSpec':True}]},
                 'decorInventory': {'available':True,'items':[{'decorID':77,'name':'Warm Chair','storedCount':2,'placedCount':1}]},
                 'questLog': {'available':True,'totalQuests':1,'entries':[{'questID':123,'title':'A Current Quest','objectives':[]}]},
                 'professionRecipes': {'available':True,'professions':[{'skillLineID':755,'name':'Classic Jewelcrafting','recipes':[{'recipeID':1261659,'name':'Ironforge Chandelier','learned':True}]}]},
@@ -401,7 +402,9 @@ class AchievementTrackerTests(unittest.TestCase):
             detail = tracker.hammerlink_import('bianca', character)
             self.assertEqual((summary['equipmentCount'], summary['bagItemCount'], summary['currencyCapCount'], summary['decorItemCount'], summary['questLogCount']), (0, 0, 8, 1, 1))
             self.assertEqual((summary['professionRecipeCount'], summary['professionSkillLineCount']), (1, 1))
+            self.assertEqual(summary['currentSpellCount'], 2)
             self.assertFalse(detail['snapshot']['exportOptions']['vault'])
+            self.assertTrue(detail['snapshot']['currentSpellbook']['spells'][1]['isOffSpec'])
             self.assertEqual(detail['snapshot']['decorInventory']['items'][0]['storedCount'], 2)
             self.assertEqual(
                 [item['name'] for item in detail['snapshot']['currencyCaps']],
@@ -410,6 +413,8 @@ class AchievementTrackerTests(unittest.TestCase):
             with tracker._connect() as db:
                 stored = json.loads(db.execute('SELECT snapshot_json FROM hammerlink_imports').fetchone()[0])
             self.assertEqual(stored['currencyCaps'][0]['name'], 'Other Token')
+            champion = next(item for item in detail['snapshot']['currencyCaps'] if item['currencyID'] == 3444)
+            self.assertEqual((champion['quantity'], champion['totalEarned'], champion['maxQuantity']), (30, 10, 300))
 
     def test_hammerlink_vault_read_model_labels_and_clamps_cumulative_progress(self):
         with tempfile.TemporaryDirectory() as directory:

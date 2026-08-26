@@ -412,6 +412,8 @@ class AchievementTracker:
         decor_items = decor_inventory.get('items') if isinstance(decor_inventory, dict) else []
         quest_log = snapshot.get('questLog') if isinstance(snapshot, dict) else {}
         quest_entries = quest_log.get('entries') if isinstance(quest_log, dict) else []
+        current_spellbook = snapshot.get('currentSpellbook') if isinstance(snapshot, dict) else {}
+        current_spells = current_spellbook.get('spells') if isinstance(current_spellbook, dict) else []
         profession_recipes = snapshot.get('professionRecipes') if isinstance(snapshot, dict) else {}
         profession_lines = profession_recipes.get('professions') if isinstance(profession_recipes, dict) else []
         profession_recipe_count = sum(len(line.get('recipes', [])) for line in profession_lines if isinstance(line, dict)) if isinstance(profession_lines, list) else 0
@@ -436,6 +438,7 @@ class AchievementTracker:
             'currencyCapCount': len(currency_caps) if isinstance(currency_caps, list) else 0,
             'decorItemCount': len(decor_items) if isinstance(decor_items, list) else 0,
             'questLogCount': len(quest_entries) if isinstance(quest_entries, list) else 0,
+            'currentSpellCount': len(current_spells) if isinstance(current_spells, list) else 0,
             'professionRecipeCount': profession_recipe_count,
             'professionSkillLineCount': len(profession_lines) if isinstance(profession_lines, list) else 0,
             'equippedItemLevel': row['equipped_item_level'],
