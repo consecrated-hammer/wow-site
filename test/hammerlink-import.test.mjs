@@ -111,6 +111,21 @@ test('accepts every occupied bag slot, with rich gear metadata where available',
   assert.equal(decoded.bagEquipment[1].inventoryType, undefined);
 });
 
+test('accepts an occupied bag item whose optional client name is blank or null', async () => {
+  const snapshot = parseHammerLinkExport(await fixture(), { now });
+  snapshot.bagEquipment = [{
+    bag: 0,
+    slot: 1,
+    itemID: 228843,
+    link: '|cffa335ee|Hitem:228843|h[Fallback from link]|h|r',
+    name: ''
+  }];
+  const decoded = parseHammerLinkExport(exportSnapshot(snapshot), { now });
+  assert.equal(decoded.bagEquipment[0].name, '');
+  snapshot.bagEquipment[0].name = null;
+  assert.equal(parseHammerLinkExport(exportSnapshot(snapshot), { now }).bagEquipment[0].name, null);
+});
+
 test('rejects duplicate bag locations', async () => {
   const snapshot = parseHammerLinkExport(await fixture(), { now });
   const item = { bag: 0, slot: 1, itemID: 1, link: '|Hitem:1|h[Test]|h' };
