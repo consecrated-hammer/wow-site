@@ -1,33 +1,53 @@
 # wow-site
 
 `wow-site` is a personal World of Warcraft fan site served at
-`https://wow.batserver.au`. It uses hand-authored HTML, CSS and JavaScript with
-no framework or build step, plus a small dependency-free Node server for the
-Blizzard character equipment API.
+`https://wow.batserver.au`. The current application uses React/Vite with a
+FastAPI persistence layer, plus a dependency-free private Node adapter for
+Blizzard data and HammerLink decoding.
 
 ## Contents
 
 - `site/index.html` — landing page and tool index
-- `site/gear-advisor.html` — gear advisor tool
+- `site/gear-advisor.html` — Blizzard-backed character gear tool
+- `site/upgrade-tracks.html` — manual item-level and upgrade-track comparison
 - `site/styles.css` — shared site theme
 - `site/gear-advisor.css` / `site/gear-advisor.js` — gear advisor only
 - `site/season-data.js` — shared season tracks and Blizzard bonus-ID mapping
 - `site/assets/` — favicon and images
 - `server.mjs` — static delivery, Blizzard API adapter and in-memory caches
+- `frontend/` — the current React/Vite player application
+- `backend/app/main.py` — authenticated browser API and static app host
+- `achievement_tracker.py` — SQLite-backed user and character state
 - `mcp_server.py` — official SDK v2 MCP surface backed by the same character API
 - `Dockerfile.mcp` / `requirements-mcp.txt` — isolated MCP sidecar image
 - `test/` — Node's built-in test suite
 
 ## Tools
 
-### Gear advisor
+### Character gear
 
-Compares the season's gear upgrade tracks against your item level. Move the
-slider and each rank re-colours as an upgrade, sidegrade or downgrade; each
-track also reports the first rank that beats you and what it costs in crests.
+Looks up a character's current equipment from Blizzard, sorts low item-level
+slots first, shows each item's real current-season path, and labels guide-listed
+BiS coverage separately as dated community advice.
+
+### Upgrade tracks
+
+Compares every rank on the season's upgrade tracks against a manually selected
+item level. Each cell uses a symbol as well as colour, and each track reports
+the first rank that beats the selected level and its crest cost.
 
 Season numbers and Blizzard upgrade bonus IDs are patch-specific and live in
 one place: `site/season-data.js`.
+
+### HammerLink imports
+
+The authenticated `/hammerlink` page validates an addon's `HL1:` export and
+stores the latest snapshot per account and character. It shows equipped gear,
+all occupied bag items with rich metadata and stats where the client provides
+them, the client-exposed current spellbook, Great Vault activity, capped
+currency balance and cap progress, cached profession observations, the current
+quest log and objective progress, timestamps, and the active talent import. The browser API derives its user key from the trusted
+Authelia/OAuth identity header; callers cannot supply or query another user ID.
 
 The character lookup uses Blizzard's server-to-server client credentials flow.
 Character equipment is cached in memory for five minutes. Simultaneous requests
@@ -49,20 +69,24 @@ on each item card so the current-path summary remains the primary view.
 
 ### MCP v2
 
-The public Streamable HTTP endpoint at `/mcp` uses the official Python SDK v2
-and exposes five read-only structured tools:
+The Streamable HTTP endpoint at `/mcp` uses the official Python SDK v2 and
+exposes 26 canonical structured tools. Read-only tools cover character
+equipment, profile, talents, achievements, realms, season rewards, class
+guidance, gear audits, raid progress, observed meta builds, achievement
+planning, and the authenticated user's private HammerLink inventory. Explicitly
+labelled tracker tools can update only Consecrated Hammer's local private state;
+they do not change Blizzard or in-game data. The legacy `hammerlink_import_list`
+and `hammerlink_import_get` names remain compatibility aliases.
 
-- `get_character_equipment` returns the same character, item, current-path,
-  replacement-threshold, fetch-time, and cache data used by the site.
-- `get_character_talents` returns the active specialization, hero tree, current
-  class/spec/hero talent selections, and in-game import code.
-- `get_character_profile` returns compact identity and progression context,
-  including item levels, achievement points, current-season Mythic+ rating,
-  and best runs.
-- `get_character_achievements` returns completion totals, points, and up to 25
-  recent achievements without emitting the full multi-thousand-entry history.
-- `list_realms` returns Blizzard realm IDs, display names, and slugs for a
-  region so an agent can validate lookup inputs.
+The authenticated React app documents setup at `/mcp-guide`, including current
+ChatGPT and Claude connection steps, suggested prompts, and a collapsed tool
+catalogue. Both clients use the public OAuth client ID `wow-mcp-shared` with no
+client secret. Exact Great Vault state comes from `get_character_inventory`; the
+older inferred `get_great_vault_progress` tool is not advertised.
+
+The MCP sidecar forwards to the same guarded internal JSON routes used by the
+site so player and agent traffic share caches, rate limits, validation, and
+audit handling.
 
 All tools call the existing internal JSON API, so they share its 60-request
 per-minute caller limit, five-minute character cache, one-day realm cache,
@@ -91,9 +115,11 @@ at `/mnt/docker/infra/config/dockerconfigs/docker-compose.yml`, as the
 full deploy is:
 
 ```bash
-docker compose -p config -f /mnt/docker/infra/config/dockerconfigs/docker-compose.yml \
-  up -d --build wow-site wow-site-mcp
+./scripts/deploy.sh
 ```
+
+This rebuilds the private Blizzard adapter, the authenticated browser app, and
+the MCP sidecar after validating the Compose configuration.
 
 Traefik routes `wow.${DOMAIN_PRIMARY}` to the site on port 80 and gives the
 path-specific `/mcp` route to the MCP sidecar on port 8767.
@@ -112,9 +138,10 @@ Optional tuning variables are `CHARACTER_CACHE_TTL_SECONDS` (default `300`),
 
 ## Notes
 
-- The site is currently **public** — no authentication. `*.batserver.au`
-  resolves to the WAN address, so anything served here is internet-reachable.
-- The public lookup neither saves nor presets a personal character. Persistent
-  personal character state belongs under the reserved `/my/` URL prefix, which
-  remains empty and can be put behind auth later.
+- The browser application is protected by Authelia. The MCP endpoint uses its
+  OAuth gateway; both paths hash the authenticated subject into the same
+  account key before accessing private rows.
+- Character definitions and Blizzard-confirmed facts may be shared, but user
+  overlays, recent-character associations, labels, and HammerLink snapshots
+  are scoped by that account key.
 - `robots.txt` disallows crawling.

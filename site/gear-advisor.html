@@ -4,48 +4,45 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
-<title>Gear advisor — Consecrated Hammer</title>
-<meta name="description" content="Compare Midnight Season 2 gear upgrade tracks against your current item level.">
-<link rel="icon" href="assets/paladin-mcp-icon.png?v=1" type="image/png" sizes="192x192">
+<meta name="theme-color" content="#0b0d14">
+<title>Character gear — Consecrated Hammer</title>
+<meta name="description" content="Check a World of Warcraft character's equipped gear, upgrade paths, and guide coverage.">
+<link rel="icon" href="assets/mcp-icon.png?v=2" type="image/png" sizes="192x192">
 <link rel="stylesheet" href="styles.css">
-<link rel="stylesheet" href="gear-advisor.css?v=4">
+<link rel="stylesheet" href="gear-advisor.css?v=6">
+<script>const whTooltips = { colorLinks: false, iconizeLinks: false, renameLinks: false };</script>
 </head>
-<body>
+<body class="gear-page">
+
+<a class="skip-link" href="#main-content">Skip to main content</a>
 
 <header class="masthead">
   <div class="wrap">
     <a class="brand" href="/">
-      <img class="brand-mark" src="assets/favicon.svg" alt="" width="30" height="30">
+      <img class="brand-mark" src="assets/paladin-mcp-icon.png" alt="" width="30" height="30">
       <span class="brand-name">Consecrated Hammer</span>
     </a>
     <nav class="nav" aria-label="Primary">
       <a href="/">Home</a>
-      <a href="/gear-advisor.html" aria-current="page">Gear advisor</a>
+      <a href="/gear-advisor.html" aria-current="page">Character gear</a>
+      <a href="/mythic-planner.html">Mythic+ planner</a>
+      <a href="/upgrade-tracks.html">Upgrade tracks</a>
+      <a href="/mcp.html">MCP</a>
     </nav>
   </div>
 </header>
 
-<main>
+<main id="main-content">
   <div class="wrap">
 
-    <div class="page-head">
-      <p class="eyebrow">Midnight 12.1 &middot; Season 2</p>
-      <h1>Gear advisor</h1>
-      <p class="lede">
-        Set your item level and every upgrade track re-colours: what beats it,
-        what matches it, and what to leave on the floor.
-      </p>
+    <div class="gear-toolbar">
+      <h1>Character gear</h1>
+      <div class="gear-toolbar-actions"><button class="button-secondary" id="hammerlink-import-open" type="button">Import HammerLink</button><button class="button-secondary" id="mythic-planner-open" type="button" disabled>Mythic+ planner</button><button class="button-primary" id="character-picker-open" type="button">Find a character</button></div>
     </div>
 
-    <section class="panel character-panel" aria-labelledby="character-title">
-      <div class="character-heading">
-        <div>
-          <p class="eyebrow">Live character equipment</p>
-          <h2 id="character-title">Your upgrade paths</h2>
-          <p>Look up a character directly from Blizzard. Results are cached briefly on this server.</p>
-        </div>
-      </div>
-
+    <dialog class="character-modal" id="character-picker" aria-labelledby="character-picker-title">
+      <button class="modal-close" id="character-picker-close" type="button" aria-label="Close character selector">×</button>
+      <h2 id="character-picker-title">Find a character</h2>
       <form class="character-form" id="character-form">
         <label>
           <span>Region</span>
@@ -66,59 +63,61 @@
         </label>
         <label>
           <span>Character</span>
-          <input name="name" autocomplete="off" placeholder="Bluehoof" maxlength="24" required>
+          <input name="name" autocomplete="off" spellcheck="false" placeholder="Character name…" maxlength="24" required>
         </label>
-        <button class="button-primary" id="character-submit" type="submit">Look up character</button>
+        <button class="button-primary" id="character-submit" type="submit">View gear</button>
       </form>
-
       <p class="character-status" id="character-status" role="status" aria-live="polite"></p>
+    </dialog>
+    <dialog class="character-modal hammerlink-modal" id="hammerlink-import" aria-labelledby="hammerlink-import-title">
+      <button class="modal-close" id="hammerlink-import-close" type="button" aria-label="Close HammerLink import">×</button>
+      <h2 id="hammerlink-import-title">Import HammerLink</h2>
+      <p>Paste a live in-game export to start this character, or refresh the open character with its exact Great Vault state.</p>
+      <form id="hammerlink-import-form"><label><span>HL1 export</span><textarea name="export" rows="8" spellcheck="false" placeholder="HL1:…" required></textarea></label><button class="button-primary" type="submit">Use live capture</button></form>
+      <p class="character-status" id="hammerlink-import-status" role="status" aria-live="polite"></p>
+    </dialog>
 
+    <section class="panel character-panel" aria-label="Character equipment">
+      <div class="character-empty-stage" id="character-empty">
+        <p>Load a character to view gear.</p>
+        <button class="empty-stage-link" id="character-empty-open" type="button">Find a character</button>
+      </div>
       <div class="character-results" id="character-results" hidden>
         <div class="character-result-head">
           <div>
             <h3 id="character-result-title"></h3>
             <p id="character-result-meta"></p>
+            <p class="gear-filter-status" id="gear-filter-status" role="status" aria-live="polite"></p>
           </div>
-          <button class="button-secondary" id="character-refresh" type="button">Refresh now</button>
+          <div class="refresh-control">
+            <button class="button-secondary" id="character-refresh" type="button">Refresh now</button>
+            <span id="character-refresh-note" class="refresh-tooltip" role="tooltip"></span>
+          </div>
         </div>
-        <div class="equipment-grid" id="character-equipment"></div>
+        <div class="character-summary" id="character-summary" aria-label="Character gear summary"></div>
+        <section class="hammerlink-capture" id="hammerlink-capture" hidden aria-label="Live in-game capture"></section>
+        <p class="guidance-note" id="character-guidance" hidden></p>
+        <section class="character-decision" id="character-guide" hidden aria-label="Character decision surface"></section>
+        <div class="character-paper-doll" id="character-paper-doll">
+          <div class="equipment-rail" id="character-equipment-left" aria-label="Left-side equipped items"></div>
+          <figure class="character-render" id="character-render" hidden>
+            <img id="character-render-image" alt="">
+          </figure>
+          <div class="equipment-rail" id="character-equipment-right" aria-label="Right-side equipped items"></div>
+          <div class="equipment-weapons" id="character-equipment-weapons" aria-label="Equipped weapons"></div>
+        </div>
+        <dialog class="gear-modal" id="gear-modal" aria-labelledby="gear-modal-title">
+          <button class="modal-close" id="gear-modal-close" type="button" aria-label="Close item details">×</button>
+          <div id="gear-modal-content"></div>
+        </dialog>
+        <dialog class="planner-modal" id="mythic-planner-modal" aria-labelledby="mythic-planner-title">
+          <button class="modal-close" id="mythic-planner-close" type="button" aria-label="Close Mythic+ planner">×</button>
+          <div id="mythic-planner-content"></div>
+        </dialog>
         <p class="ga-note">
-          Equipment comes from Blizzard's public character profile. Log out of the game before refreshing
-          so the Armory can record recent changes. Crest totals are undiscounted.
+          Blizzard character data. Log out before refreshing to record recent gear changes.
         </p>
       </div>
-    </section>
-
-    <section class="panel" aria-labelledby="ga-title">
-      <h2 class="sr" id="ga-title">Season 2 upgrade tracks by rank</h2>
-
-      <div class="ga-controls">
-        <div class="ga-readout">
-          <label for="ga-ilvl">Your ilvl</label>
-          <output id="ga-out" for="ga-ilvl">289</output>
-        </div>
-        <input class="ga-slider" type="range" id="ga-ilvl"
-               min="250" max="344" step="1" value="289"
-               aria-label="Your current item level">
-      </div>
-
-      <div class="ga-grid" id="ga-heads"></div>
-      <div class="ga-grid" id="ga-rows"></div>
-
-      <div class="ga-legend">
-        <span><span class="ga-swatch" style="background:var(--gain-bg);border:1px solid var(--gain-border);"></span>Upgrade</span>
-        <span><span class="ga-swatch" style="background:var(--stone-750);border:1px solid var(--stone-600);"></span>Sidegrade</span>
-        <span><span class="ga-swatch" style="background:var(--loss-bg);border:1px solid var(--loss-border);"></span>Downgrade</span>
-        <span style="color:var(--text-3);">20 Mistcrests per rank &middot; 100 weekly cap</span>
-      </div>
-
-      <p class="ga-note">
-        Champion, Hero and Myth values are the post-bump Season 2 figures.
-        Adventurer and Veteran are extrapolated from confirmed track spacing.
-        Set bonuses and trinket effects still matter. Later Ascendant upgrades
-        up to ilvl 341 and special Myth-9-equivalent raid loot at ilvl 344 sit
-        outside the normal 1/6&ndash;6/6 track table.
-      </p>
     </section>
 
   </div>
@@ -131,6 +130,7 @@
   </div>
 </footer>
 
-<script type="module" src="gear-advisor.js?v=5"></script>
+<script type="module" src="gear-advisor.js?v=8"></script>
+<script defer src="https://wow.zamimg.com/js/tooltips.js"></script>
 </body>
 </html>

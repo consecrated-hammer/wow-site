@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { deflateRawSync } from 'node:zlib';
 import {
   API_ROUTES,
   SEASON_REWARD_CATEGORIES,
@@ -14,8 +15,26 @@ import {
 } from '../server.mjs';
 import { PROVENANCE as P, assertGearProvenance as assertGear } from '../lib/providers.mjs';
 import { resolveSeasonModule } from '../site/seasons/index.js';
+import { buildMythicPlanner } from '../lib/mythic-planner.mjs';
 
-function callApp(app, { method, url, address = '203.0.113.7' }) {
+function hammerLinkExport(snapshot) {
+  const alphabet = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789()';
+  const compressed = deflateRawSync(JSON.stringify(snapshot), { level: 9 });
+  let output = '', cache = 0, bitLength = 0;
+  for (const byte of compressed) {
+    cache += byte * (2 ** bitLength);
+    bitLength += 8;
+    while (bitLength >= 6) {
+      output += alphabet[cache & 63];
+      cache >>>= 6;
+      bitLength -= 6;
+    }
+  }
+  if (bitLength > 0) output += alphabet[cache & 63];
+  return `HL1:${output}`;
+}
+
+function callApp(app, { method, url, address = '203.0.113.7', body = '' }) {
   return new Promise((resolve) => {
     const headers = {};
     const chunks = [];
@@ -24,9 +43,75 @@ function callApp(app, { method, url, address = '203.0.113.7' }) {
       writeHead(status, extra) { this.status = status; Object.assign(headers, extra || {}); },
       end(body) { if (body) chunks.push(body); resolve({ status: this.status, headers, body: chunks.join('') }); }
     };
-    app({ method, url, headers: { 'x-forwarded-for': `198.51.100.1, ${address}` }, socket: { remoteAddress: '172.18.0.2' } }, response);
+    app({
+      method, url,
+      headers: { 'x-forwarded-for': `198.51.100.1, ${address}` },
+      socket: { remoteAddress: '172.18.0.2' },
+      async *[Symbol.asyncIterator]() { if (body) yield Buffer.from(body); }
+    }, response);
   });
 }
+
+test('HammerLink parser returns the complete validated snapshot to the private app', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const exported = (await readFile(new URL('./fixtures/hammerlink-valid.hl1', import.meta.url), 'utf8')).trim();
+  const app = createApp({ characterService: {} });
+  const result = await callApp(app, {
+    method: 'POST', url: '/api/hammerlink-import', body: JSON.stringify({ export: exported })
+  });
+  assert.equal(result.status, 200);
+  const parsed = JSON.parse(result.body);
+  assert.equal(parsed.provenance, 'in_game_export');
+  assert.equal(parsed.snapshot.character.name, 'Bluehoof');
+  assert.equal(parsed.snapshot.equipment.length, parsed.equipmentCount);
+  assert.equal(parsed.bagItemCount, 0);
+});
+
+test('HammerLink HTTP import accepts option-aware snapshots with omitted sections', async () => {
+  const exported = hammerLinkExport({
+    format: 2,
+    capturedAt: Math.floor(Date.now() / 1000),
+    character: { name: 'Test', realm: 'Test Realm', region: 1, class: 'PALADIN', level: 90 },
+    exportOptions: { equipment: false, bagItems: false, talents: false, vault: false, currencyCaps: false, decorInventory: true },
+    decorInventory: { available: true, items: [{ decorID: 1, name: 'Test Decor', storedCount: 1 }] },
+  });
+  const result = await callApp(createApp({ characterService: {} }), {
+    method: 'POST', url: '/api/hammerlink-import', body: JSON.stringify({ export: exported })
+  });
+  assert.equal(result.status, 200);
+  const parsed = JSON.parse(result.body);
+  assert.equal(parsed.equipmentCount, 0);
+  assert.equal(parsed.bagItemCount, 0);
+  assert.equal(parsed.hasTalentImport, false);
+  assert.equal(parsed.snapshot.decorInventory.items.length, 1);
+});
+
+test('HammerLink HTTP import accepts a complete compact catalog above the legacy request limit', async () => {
+  const snapshot = {
+    format: 3,
+    capturedAt: Math.floor(Date.now() / 1000),
+    character: { name: 'Test', realm: 'Test Realm', region: 1, class: 'PALADIN', level: 90 },
+    exportOptions: { equipment: false, bagItems: false, talents: false, vault: false, currencyCaps: false, decorInventory: true },
+    decorInventory: {
+      available: true,
+      truncated: false,
+      packedItems: Array.from({ length: 8192 }, (_, index) => [
+        index + 1, `Housing Decoration ${index + 1}`, 100_000 + index,
+        200_000 + index, 1, 0, 0, 1, 6,
+      ]),
+    },
+  };
+  const code = hammerLinkExport(snapshot);
+  assert.ok(JSON.stringify({ export: code }).length > 70_000);
+
+  const response = await callApp(createApp({ characterService: {} }), {
+    method: 'POST', url: '/api/hammerlink-import', body: JSON.stringify({ export: code }),
+  });
+  assert.equal(response.status, 200);
+  const payload = JSON.parse(response.body);
+  assert.equal(payload.snapshot.decorInventory.items.length, 8192);
+  assert.equal(payload.snapshot.decorInventory.packedItems, undefined);
+});
 
 test('normalises Blizzard realm and character path values', () => {
   assert.equal(normaliseRealm(" Dath'Remar "), 'dathremar');
@@ -469,6 +554,12 @@ test('normalises and independently caches talents, profile progression, and rece
     if (url.includes('/mythic-keystone-profile')) {
       return respond('mythic-index', { seasons: [{ id: 17 }] });
     }
+    if (url.includes('/character-media')) {
+      return respond('character-media', { assets: [
+        { key: 'avatar', value: 'https://render.example/bluehoof-avatar.jpg' },
+        { key: 'main-raw', value: 'https://render.example/bluehoof-main.png' }
+      ] });
+    }
     if (url.includes('/achievements')) {
       return respond('achievements', {
         character: { name: 'Bluehoof', realm: { name: "Dath'Remar", slug: 'dathremar', id: 3735 } },
@@ -515,13 +606,47 @@ test('normalises and independently caches talents, profile progression, and rece
     assert.equal(profile.mythicPlus.bestRuns[0].dungeon, 'Maisara Caverns');
     assert.equal(achievements.totalCompleted, 3201);
     assert.equal(achievements.recentAchievements[0].id, 61643);
+    assert.equal(achievements.character.faction, 'Alliance');
+    assert.equal(achievements.character.avatarUrl, 'https://render.example/bluehoof-avatar.jpg');
     assert.deepEqual(Object.fromEntries(calls), {
       talents: 1,
       profile: 1,
       'mythic-index': 1,
       'mythic-season': 1,
-      achievements: 1
+      achievements: 1,
+      'character-media': 1
     });
+  } finally {
+    if (originalId === undefined) delete process.env.BLIZZARD_CLIENT_ID;
+    else process.env.BLIZZARD_CLIENT_ID = originalId;
+    if (originalSecret === undefined) delete process.env.BLIZZARD_CLIENT_SECRET;
+    else process.env.BLIZZARD_CLIENT_SECRET = originalSecret;
+  }
+});
+
+test('preserves Blizzard achievement faction requirements', async () => {
+  const originalId = process.env.BLIZZARD_CLIENT_ID;
+  const originalSecret = process.env.BLIZZARD_CLIENT_SECRET;
+  process.env.BLIZZARD_CLIENT_ID = 'test-id';
+  process.env.BLIZZARD_CLIENT_SECRET = 'test-secret';
+  const fetchImpl = async (input) => {
+    const url = String(input);
+    if (url === 'https://oauth.battle.net/token') return Response.json({ access_token: 'token', expires_in: 86400 });
+    if (url.includes('/achievement-category/index')) return Response.json({ categories: [] });
+    if (url.includes('/data/wow/achievement/13924')) return Response.json({
+      id: 13924,
+      name: 'The Fourth War',
+      points: 10,
+      description: 'Complete the War Campaign in Battle for Azeroth.',
+      requirements: { faction: { type: 'HORDE', name: 'Horde' } },
+      criteria: { id: 82345 },
+    });
+    throw new Error(`Unexpected URL: ${url}`);
+  };
+  try {
+    const service = createCharacterService({ fetchImpl });
+    const result = await service.lookupAchievementMetadata([13924], 'us', false);
+    assert.equal(result.records[0].requiredFaction, 'HORDE');
   } finally {
     if (originalId === undefined) delete process.env.BLIZZARD_CLIENT_ID;
     else process.env.BLIZZARD_CLIENT_ID = originalId;
@@ -578,13 +703,15 @@ test('guards every API route against non-GET methods and rate limits', async () 
   for (const pathname of API_ROUTES.keys()) {
     const app = createApp({ characterService: stub });
 
-    const post = await callApp(app, { method: 'POST', url: pathname });
-    assert.equal(post.status, 405, `${pathname} must reject non-GET`);
+    const disallowedMethod = pathname === '/api/hammerlink-import' ? 'PUT' : 'POST';
+    const post = await callApp(app, { method: disallowedMethod, url: pathname });
+    assert.equal(post.status, 405, `${pathname} must reject ${disallowedMethod}`);
     assert.equal(JSON.parse(post.body).error, 'method_not_allowed');
 
     const head = await callApp(app, { method: 'HEAD', url: pathname });
     assert.equal(head.status, 405, `${pathname} must reject HEAD`);
 
+    if (pathname === '/api/hammerlink-import') continue;
     let limited = null;
     for (let attempt = 0; attempt < 62 && !limited; attempt += 1) {
       const result = await callApp(app, { method: 'GET', url: pathname });
@@ -906,6 +1033,52 @@ test('parses ClassCodex Lua tables without executing them', async () => {
   assert.equal(extractAssignment(source, 'NotPresent'), null);
 });
 
+test('imports ClassCodex 1.0 source databases with context and attribution', async () => {
+  const { mkdtemp, mkdir, rm, writeFile } = await import('node:fs/promises');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { importClassCodex, specGuidance } = await import('../lib/classcodex.mjs');
+  const addon = await mkdtemp(join(tmpdir(), 'classcodex-1-'));
+  try {
+    await mkdir(join(addon, 'Data'));
+    await writeFile(join(addon, 'ClassCodex.toc'), '## Interface: 120100\n## Version: 1.0.0\n');
+    await writeFile(join(addon, 'Data', 'db_icyveins.lua'), `ClassCodexSource = ClassCodexSource or {}
+ClassCodexSource["icyveins"] = {
+  data={PALADIN={holy={
+    statPriority={all={all={secondary={{"Mastery"},{"Haste"}}}}},
+    talents={all={mplus={{export="CEE",label="Mythic+",recommended=true}}}},
+    rotation={all={all={steps={"Use {123}", {text="Then {456}"}}}}},
+    gear={all={mplus={{itemId=1,bonusIDs={2},slot="Head",source="Boss"}}}},
+    trinkets={all={all={{itemId=3,tier="S"}}}},
+    enchants={all={all={Head={{id=4}}}},}, gems={all={all={{primary=5,secondary={6}}}},},
+    consumables={all={all={food={7}}}}, crafting={all={all={crafts={8},embellishments={9}}}},
+    omniumFolio={all={all={{spellId=10}}}}, links={talents="https://example.test/talents"}
+  }}}, meta={generatedAt="2026-08-18T00:00:00Z",contentHash="iv",schemaVersion=1}, reference={heroNames={},encounters={dungeons={},bosses={}}}
+}`);
+    await writeFile(join(addon, 'Data', 'db_ugg.lua'), `ClassCodexSource = ClassCodexSource or {}
+ClassCodexSource["ugg"] = { data = { PALADIN = { holy = {
+  statPriority = { lightsmith = { mplus = { primary = "Intellect", secondary = {{"Haste"}} } } },
+  statTargets = { lightsmith = { mplus = { crit = 1, haste = 2, mastery = 3, versatility = 4 } } },
+  talents = { lightsmith = { ["mplus:12"] = {{ export = "CUGG", pickrate = 50, topDps = true }} } },
+  gear = { lightsmith = { mplus = {{ itemId = 11, ilvl = 290, pop = 20, slot = "Head" }} } },
+  tierRank = { lightsmith = { ["mplus:12"] = { count = 99, pop = 25, tier = "S", rank = 8, dps = 10, hps = 11 } } }
+} } }, meta = { generatedAt = "2026-08-19T00:00:00Z", contentHash = "ugg", schemaVersion = 1 }, reference = { heroNames = { lightsmith = "Lightsmith" }, encounters = { dungeons = {[12] = "Example Dungeon"}, bosses = {} } } }`);
+
+    const snapshot = await importClassCodex(addon);
+    assert.equal(snapshot.addonVersion, '1.0.0');
+    assert.equal(snapshot.specCount, 1);
+    assert.equal(snapshot.sources.ugg.generatedAt, '2026-08-19T00:00:00Z');
+    const guidance = specGuidance(snapshot, 'paladin', 'holy', { activity: 'mplus', source: 'ugg' });
+    assert.equal(guidance.talentBuilds[0].exportString, 'CUGG');
+    assert.equal(guidance.talentBuilds[0].encounter, 'Example Dungeon');
+    assert.equal(guidance.rankings[0].count, 99);
+    assert.equal(guidance.bisGear.recommendations[0].popularity, 20);
+    assert.deepEqual(guidance.rotation, [], 'editorial guide prose is not returned by the U.GG-only filter');
+  } finally {
+    await rm(addon, { recursive: true, force: true });
+  }
+});
+
 test('audits equipment against guidance and labels each side', async () => {
   const { auditGear } = await import('../lib/gear-audit.mjs');
 
@@ -919,17 +1092,17 @@ test('audits equipment against guidance and labels each side', async () => {
     ]
   };
   const guidance = {
-    addonVersion: '0.36.3',
-    lastScrape: '2026-07-02',
+    addonVersion: '1.0.0',
+    lastScrape: '2026-08-19T15:34:08.826Z',
     bisGear: {
-      archon: [{ label: 'Mythic+', slots: [
-        { item: { itemId: 193710, name: 'Spellboon Saber' }, bis: true },
-        { item: { itemId: 249960, name: "Luminant Verdict's Greaves" }, bis: false }
-      ] }]
+      recommendations: [
+        { source: 'icyveins', activity: 'mplus', slot: 'Main Hand', itemId: 193710, droppedBy: 'Nekzali' },
+        { source: 'ugg', activity: 'mplus', slot: 'Legs', itemId: 249960 }
+      ]
     },
     trinkets: [
-      { itemId: 249343, tier: 'S', contexts: ['raid'], source: 'Chimaerus' },
-      { itemId: 264507, tier: 'C', contexts: ['delves'] }
+      { itemId: 249343, tier: 'S', activity: 'raid', droppedBy: 'Chimaerus' },
+      { itemId: 264507, tier: 'C', activity: 'delve' }
     ]
   };
 
@@ -948,7 +1121,7 @@ test('audits equipment against guidance and labels each side', async () => {
   assert.equal(audit.slots.find((slot) => slot.slot === 'Head').recommendation, null);
   // Only S/A trinkets are suggested, and they name the boss that drops them.
   assert.deepEqual(audit.trinketUpgrades.map((t) => t.droppedBy), ['Chimaerus']);
-  assert.match(audit.guidance.staleness, /2026-07-02/);
+  assert.match(audit.guidance.staleness, /2026-08-19/);
 
   // The provider boundary is enforced, not assumed.
   assert.throws(
@@ -1071,13 +1244,17 @@ test('class guidance degrades instead of failing when data is missing', async ()
   // Snapshot present, talent trees absent: builds still come back as import
   // strings with a warning, because an undecoded build is still usable.
   const snapshot = {
-    addonVersion: '0.36.3',
-    lastScrape: '2026-07-02',
+    addonVersion: '1.0.0',
+    lastScrape: '2026-08-19T15:34:08.826Z',
     specs: {
       'PALADIN/holy': {
         classToken: 'PALADIN',
         spec: 'holy',
-        guide: { priorities: [{ stats: [['Mastery']] }], talents: [{ context: 'Mythic+', exportString: 'CEEAAAA' }] }
+        statPriorities: [{ source: 'icyveins', activity: 'general', secondary: [['Mastery']] }],
+        statTargets: [],
+        talentBuilds: [{ source: 'icyveins', activity: 'mplus', exportString: 'CEEAAAA' }],
+        trinkets: [],
+        sourceUrls: { icyveins: { talents: 'https://www.icy-veins.com/wow/holy-paladin-pve-healing-spec-builds-talents' } }
       }
     }
   };
@@ -1116,7 +1293,10 @@ test('guidance and gear-audit routes are guarded and validated', async () => {
 
   const ok = await callApp(app, { method: 'GET', url: '/api/class-guidance?class=paladin&spec=holy&specId=65' });
   assert.equal(ok.status, 200);
-  assert.deepEqual(JSON.parse(ok.body).echo, { className: 'paladin', spec: 'holy', specId: 65 });
+  assert.deepEqual(JSON.parse(ok.body).echo, {
+    className: 'paladin', spec: 'holy', specId: 65,
+    activity: null, heroTalent: null, encounterId: null, source: null
+  });
 
   for (const [query, code] of [
     ['class=&spec=holy', 'invalid_class'],
@@ -1230,4 +1410,24 @@ test('contract-checks every Raider.IO page, not just the first', async () => {
   assert.deepEqual(empty.comps, []);
   assert.equal(empty.source, 'raiderio');
   assert.ok(empty.attribution.url, 'attribution travels even on an empty result');
+});
+
+test('mythic planner keeps timed status separate from targeted upgrades', () => {
+  const rewards = resolveSeasonModule(18).rewards;
+  const planner = buildMythicPlanner({
+    equipment: { character: { name: 'Bluehoof' }, items: [
+      { slot: 'FEET', slotName: 'Feet', name: 'Old boots', itemLevel: 289 },
+      { slot: 'CHEST', slotName: 'Chest', name: 'Old chest', itemLevel: 289 },
+      { slot: 'TRINKET_1', slotName: 'Trinket', name: 'Old trinket', itemLevel: 289 }
+    ] },
+    profile: { characterClass: { name: 'Paladin' }, mythicPlus: { rating: 1200, bestRuns: [{ dungeon: 'Altar of Fangs', keystoneLevel: 7, completedWithinTime: false }] } },
+    guidance: null, rewards, key: '+10'
+  });
+  assert.equal(planner.available, true);
+  assert.equal(planner.key, '+10');
+  const altar = planner.dungeons.find((entry) => entry.name === 'Altar of Fangs');
+  assert.equal(altar.bestRun.completedWithinTime, false);
+  assert.equal(altar.needsPractice, true);
+  assert.ok(altar.eligibleUpgrades.some((entry) => entry.name === 'Poison-Proof Stompers' && entry.itemLevelGain === 22));
+  assert.equal(planner.dungeons[0].needsPractice, true, 'unrun/over-time dungeons are sorted first');
 });

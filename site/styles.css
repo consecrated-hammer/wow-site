@@ -2,6 +2,7 @@
    Hand-authored, no build step. Dark stone-and-gold fan-site theme. */
 
 :root {
+  color-scheme: dark;
   --stone-900: #0b0d14;
   --stone-850: #11141d;
   --stone-800: #161a26;
@@ -12,17 +13,18 @@
   --gold-400: #f2d493;
   --gold-500: #e0b866;
   --gold-600: #c8a05a;
-  --gold-700: #8a6d38;
+  --gold-700: #b9995e;
 
   --text: #ded9ce;
   --text-2: #a49e92;
-  --text-3: #75705f;
+  --text-3: #948e80;
 
-  /* Item quality colours, straight from the game's palette. */
-  --q-uncommon: #1eff00;
-  --q-rare: #0070dd;
-  --q-epic: #a335ee;
-  --q-legendary: #ff8000;
+  /* Accessible text variants of the game's quality palette. Keep the true
+     colours for non-text accents only. */
+  --q-uncommon: #6ee85e;
+  --q-rare: #479bee;
+  --q-epic: #bd6ff2;
+  --q-legendary: #ffad66;
   --q-artifact: #e6cc80;
 
   --gain-bg: #14301a;
@@ -53,14 +55,30 @@ body {
     radial-gradient(1100px 520px at 50% -8%, rgba(94, 63, 168, 0.30), transparent 70%),
     radial-gradient(760px 400px at 50% 108%, rgba(138, 109, 56, 0.16), transparent 70%);
   background-attachment: fixed;
+  display: flex;
+  flex-direction: column;
 }
 
 a { color: var(--gold-400); text-decoration: none; }
+a, button, summary, select, input[type="range"] { touch-action: manipulation; }
 a:hover { color: #fff0cd; text-decoration: underline; }
-a:focus-visible, button:focus-visible, input:focus-visible {
+a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible {
   outline: 2px solid var(--gold-500);
   outline-offset: 3px;
 }
+
+.skip-link {
+  position: fixed;
+  z-index: 100;
+  top: 10px;
+  left: 10px;
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  color: var(--stone-900);
+  background: var(--gold-400);
+  transform: translateY(-160%);
+}
+.skip-link:focus { transform: translateY(0); }
 
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); }
 
@@ -102,9 +120,12 @@ a:focus-visible, button:focus-visible, input:focus-visible {
 
 /* ---------- Page furniture ---------- */
 
-main { padding: 46px 0 72px; }
+main { flex: 1; padding: 46px 0 72px; }
+body.home-page main { padding-top: 16px; }
+body.home-page .rule { margin-top: 0; }
 
-.page-head { max-width: 640px; margin-bottom: 34px; }
+.page-head { max-width: 680px; margin-bottom: 34px; }
+.home-head { padding: 34px 0 8px; }
 .eyebrow {
   font-size: 12px;
   letter-spacing: 0.19em;
@@ -120,6 +141,7 @@ h1 {
   margin: 0 0 12px;
   color: var(--gold-400);
 }
+h1, h2, h3 { text-wrap: balance; scroll-margin-top: 80px; }
 h2 {
   font-family: var(--serif);
   font-weight: 400;
@@ -128,6 +150,9 @@ h2 {
   color: var(--gold-400);
 }
 .lede { font-size: 17px; color: var(--text-2); margin: 0; }
+.home-status { display: flex; flex-wrap: wrap; gap: 8px 18px; margin-top: 22px; color: var(--text-3); font-size: 12px; }
+.home-status span { display: inline-flex; align-items: center; gap: 7px; }
+.home-status i { width: 7px; height: 7px; border-radius: 50%; background: var(--gain-text); box-shadow: 0 0 8px rgba(134, 217, 122, 0.5); }
 
 /* A hairline rule with a diamond, the way fan sites break sections. */
 .rule {
@@ -177,7 +202,7 @@ h2 {
 .cards {
   display: grid;
   gap: 16px;
-  grid-template-columns: repeat(auto-fit, minmax(268px, 340px));
+  grid-template-columns: repeat(auto-fit, minmax(268px, 1fr));
   justify-content: start;
 }
 .card {
@@ -196,6 +221,67 @@ h2 {
 }
 .card h2 { font-size: 19px; margin-bottom: 6px; }
 .card p { margin: 0; font-size: 14px; color: var(--text-2); }
+.module-card { position: relative; min-height: 230px; padding: 26px; overflow: hidden; }
+.module-card::after {
+  content: "";
+  position: absolute;
+  right: -55px;
+  bottom: -90px;
+  width: 190px;
+  height: 190px;
+  border: 1px solid rgba(185, 153, 94, 0.12);
+  border-radius: 50%;
+  box-shadow: 0 0 45px rgba(94, 63, 168, 0.10) inset;
+}
+.module-card-featured { background: linear-gradient(145deg, rgba(94, 63, 168, 0.18), transparent 52%), linear-gradient(180deg, var(--stone-800), var(--stone-850)); }
+.module-kicker { display: block; margin-bottom: 34px; color: var(--gold-600); font-size: 10px; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase; }
+.module-arrow { position: absolute; top: 22px; right: 24px; color: var(--text-3); font-size: 18px; transition: transform 0.16s ease, color 0.16s ease; }
+.module-card:hover .module-arrow { color: var(--gold-400); transform: translate(2px, -2px); }
+.module-card h2 { position: relative; z-index: 1; margin-bottom: 8px; font-size: 25px; }
+.module-card p { position: relative; z-index: 1; max-width: 38ch; line-height: 1.55; }
+.module-meta { position: absolute; z-index: 1; bottom: 22px; left: 26px; color: var(--text-3); font-size: 11px; }
+
+/* ---------- MCP guide ---------- */
+
+.mcp-wrap { max-width: 1120px; }
+.mcp-page main { padding-top: 14px; padding-bottom: 38px; }
+.mcp-intro { display: flex; align-items: end; justify-content: space-between; gap: 24px; }
+.mcp-intro .eyebrow { margin-bottom: 2px; }
+.mcp-intro h1 { margin-bottom: 5px; }
+.mcp-endpoint, .endpoint-code {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid var(--stone-600);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  color: var(--gold-400);
+  background: var(--stone-850);
+  font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: nowrap;
+}
+.mcp-endpoint:hover { border-color: var(--gold-700); text-decoration: none; }
+.mcp-section .rule { margin: 18px 0 9px; }
+.mcp-steps { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+.mcp-step { min-height: 110px; padding: 13px 15px; }
+.mcp-step h2 { font-size: 18px; }
+.mcp-step p { margin: 3px 0 0; color: var(--text-2); font-size: 12px; line-height: 1.4; }
+.endpoint-code { margin-top: 8px; font-size: 11px; }
+.mcp-guidance { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px 16px; padding: 12px 15px; }
+.mcp-guidance div { display: grid; gap: 1px; }
+.mcp-guidance strong { color: var(--text); font-size: 12px; }
+.mcp-guidance span { color: var(--text-2); font-size: 11px; line-height: 1.35; }
+.mcp-guidance code, .mcp-capabilities code { font: 12px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.mcp-capabilities { overflow-x: auto; border: 1px solid var(--stone-700); border-radius: var(--radius); background: var(--stone-850); }
+.mcp-capabilities table { width: 100%; min-width: 820px; border-collapse: collapse; font-size: 11px; }
+.mcp-capabilities th { padding: 8px 10px; color: var(--text-3); font-size: 10px; font-weight: 600; letter-spacing: .08em; text-align: left; text-transform: uppercase; }
+.mcp-capabilities td { padding: 8px 10px; border-top: 1px solid var(--stone-700); color: var(--text-2); line-height: 1.35; vertical-align: top; }
+.mcp-capabilities td:first-child { width: 190px; }
+.mcp-capabilities td:nth-child(2) { width: 28%; }
+.mcp-capabilities td:nth-child(3) { color: var(--text); }
+.mcp-capabilities td:last-child { color: var(--text-3); font-size: 10px; white-space: nowrap; }
+.mcp-capabilities code { color: var(--gold-400); overflow-wrap: anywhere; }
+.mcp-note { margin: 7px 0 0; color: var(--text-3); font-size: 11px; }
 
 .footer {
   border-top: 1px solid var(--stone-700);
@@ -204,3 +290,23 @@ h2 {
   color: var(--text-3);
 }
 .footer p { margin: 0 0 4px; }
+
+@media (max-width: 620px) {
+  main { padding-top: 38px; }
+  .masthead .wrap { align-items: flex-start; padding-top: 8px; }
+  .nav { width: 100%; gap: 24px; overflow-x: auto; white-space: nowrap; }
+  .brand-name { font-size: 19px; }
+  .mcp-page main { padding-top: 14px; }
+  .mcp-intro { align-items: flex-start; flex-direction: column; gap: 14px; }
+  .mcp-steps, .mcp-guidance { grid-template-columns: 1fr; }
+  .mcp-step { min-height: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

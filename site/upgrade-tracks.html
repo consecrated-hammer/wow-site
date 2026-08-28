@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en-AU">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<meta name="theme-color" content="#0b0d14">
+<title>Upgrade tracks — Consecrated Hammer</title>
+<meta name="description" content="Compare every Midnight Season 2 upgrade-track rank against an item level.">
+<link rel="icon" href="assets/mcp-icon.png?v=2" type="image/png" sizes="192x192">
+<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="gear-advisor.css?v=5">
+</head>
+<body class="tracks-page">
+
+<a class="skip-link" href="#main-content">Skip to main content</a>
+
+<header class="masthead">
+  <div class="wrap">
+    <a class="brand" href="/">
+      <img class="brand-mark" src="assets/paladin-mcp-icon.png" alt="" width="30" height="30">
+      <span class="brand-name">Consecrated Hammer</span>
+    </a>
+    <nav class="nav" aria-label="Primary">
+      <a href="/">Home</a>
+      <a href="/gear-advisor.html">Character gear</a>
+      <a href="/upgrade-tracks.html" aria-current="page">Upgrade tracks</a>
+      <a href="/mcp.html">MCP</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main-content">
+  <div class="wrap">
+    <div class="tracks-toolbar">
+      <h1>Upgrade tracks</h1>
+    </div>
+
+    <section class="panel manual-panel" aria-labelledby="ga-title">
+      <div class="ga-controls">
+        <div class="ga-readout">
+          <label id="ga-title" for="ga-ilvl">Compare ilvl</label>
+          <output id="ga-out" for="ga-ilvl">289</output>
+        </div>
+        <input class="ga-slider" type="range" id="ga-ilvl"
+               min="250" max="344" step="1" value="289"
+               aria-label="Item level to compare">
+      </div>
+
+      <div class="ga-table-scroll" role="region" aria-label="Upgrade track comparison" tabindex="0">
+        <div class="ga-table">
+          <div class="ga-grid" id="ga-heads"></div>
+          <div class="ga-grid" id="ga-rows"></div>
+        </div>
+      </div>
+      <p class="ga-scroll-hint" aria-hidden="true">Swipe to see every rank →</p>
+
+      <div class="ga-legend">
+        <span><span class="ga-state-symbol" aria-hidden="true">▲</span>Upgrade</span>
+        <span><span class="ga-state-symbol" aria-hidden="true">▬</span>Sidegrade</span>
+        <span><span class="ga-state-symbol" aria-hidden="true">▼</span>Downgrade</span>
+        <span class="ga-legend-note">20 Mistcrests per rank &middot; 100 weekly cap</span>
+      </div>
+    </section>
+  </div>
+</main>
+
+<footer class="footer">
+  <div class="wrap">
+    <p>Consecrated Hammer — a personal fan site. Not affiliated with Blizzard Entertainment.</p>
+    <p>World of Warcraft and related marks are trademarks of Blizzard Entertainment, Inc.</p>
+  </div>
+</footer>
+
+<script type="module" src="gear-advisor.js?v=6"></script>
+</body>
+</html>

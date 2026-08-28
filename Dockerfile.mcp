@@ -10,6 +10,7 @@ COPY requirements-mcp.txt /app/requirements-mcp.txt
 RUN pip install --no-cache-dir -r /app/requirements-mcp.txt
 
 COPY mcp_server.py /app/mcp_server.py
+COPY achievement_tracker.py /app/achievement_tracker.py
 RUN mkdir -p /data && chown -R 1000:1000 /app /data
 
 USER 1000:1000
