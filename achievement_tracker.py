@@ -408,6 +408,10 @@ class AchievementTracker:
     def _hammerlink_summary(row: sqlite3.Row) -> dict[str, Any]:
         snapshot = json.loads(row['snapshot_json'])
         currency_caps = snapshot.get('currencyCaps') if isinstance(snapshot, dict) else []
+        currencies = snapshot.get('currencies') if isinstance(snapshot, dict) else {}
+        currency_entries = currencies.get('entries') if isinstance(currencies, dict) else []
+        reputations = snapshot.get('reputations') if isinstance(snapshot, dict) else {}
+        reputation_entries = reputations.get('entries') if isinstance(reputations, dict) else []
         decor_inventory = snapshot.get('decorInventory') if isinstance(snapshot, dict) else {}
         decor_items = decor_inventory.get('items') if isinstance(decor_inventory, dict) else []
         quest_log = snapshot.get('questLog') if isinstance(snapshot, dict) else {}
@@ -436,6 +440,8 @@ class AchievementTracker:
             'vaultActivityCount': row['vault_activity_count'],
             'hasTalentImport': bool(row['has_talent_import']),
             'currencyCapCount': len(currency_caps) if isinstance(currency_caps, list) else 0,
+            'currencyCount': len(currency_entries) if isinstance(currency_entries, list) else 0,
+            'reputationCount': len(reputation_entries) if isinstance(reputation_entries, list) else 0,
             'decorItemCount': len(decor_items) if isinstance(decor_items, list) else 0,
             'questLogCount': len(quest_entries) if isinstance(quest_entries, list) else 0,
             'currentSpellCount': len(current_spells) if isinstance(current_spells, list) else 0,

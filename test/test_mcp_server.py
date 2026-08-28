@@ -40,6 +40,8 @@ class WowMcpTests(unittest.TestCase):
                     {"currencyID":3509,"name":"Tidal Spark Dust","quantity":3,"totalEarned":3,"maxQuantity":5,"useTotalEarnedForMaxQty":True},
                     {"currencyID":3442,"name":"Adventurer Mistcrest","quantity":149},
                 ],
+                "currencies": {"available":True,"entries":[{"currencyID":3000,"name":"Traveler Coin","quantity":17}]},
+                "reputations": {"available":True,"entries":[{"factionID":2507,"name":"Dornogal","reaction":5,"currentStanding":6000,"nextReactionThreshold":9000}]},
                 "currentSpellbook": {"available":True,"spells":[{"spellID":17364,"name":"Stormstrike","skillLine":"Enhancement"}]},
                 "vault": {"capturedAt":1787200000,"activities":[{"type":6,"index":1,"threshold":2,"progress":4}]},
             }
@@ -58,6 +60,8 @@ class WowMcpTests(unittest.TestCase):
             self.assertEqual(detail["snapshot"]["vault"]["activities"][0]["progress"], 4)
             self.assertEqual([item["currencyID"] for item in detail["snapshot"]["currencyCaps"]], [3442, 3509])
             self.assertEqual(detail["snapshot"]["currentSpellbook"]["spells"][0]["name"], "Stormstrike")
+            self.assertEqual(detail["snapshot"]["currencies"]["entries"][0]["currencyID"], 3000)
+            self.assertEqual(detail["snapshot"]["reputations"]["entries"][0]["factionID"], 2507)
             self.assertEqual(legacy["snapshot"]["bagEquipment"][0]["itemID"], 2)
             self.assertFalse(legacy_error)
             self.assertEqual(detail["provenance"], "in_game_export")

@@ -381,7 +381,7 @@ class AchievementTrackerTests(unittest.TestCase):
             snapshot = {
                 'format': 2, 'capturedAt': 1787200000,
                 'character': {'name':'Bianca','realm':'DathRemar','region':1,'class':'PALADIN','level':80},
-                'exportOptions': {'equipment':False,'bagItems':False,'currentSpellbook':True,'talents':False,'vault':False,'currencyCaps':True,'decorInventory':True,'questLog':True,'professionRecipes':True},
+                'exportOptions': {'equipment':False,'bagItems':False,'currentSpellbook':True,'talents':False,'vault':False,'currencyCaps':True,'currencies':True,'reputations':True,'decorInventory':True,'questLog':True,'professionRecipes':True},
                 'currencyCaps': [
                     {'currencyID':9000,'name':'Other Token','quantity':1},
                     {'currencyID':3445,'name':'Hero Mistcrest','quantity':45},
@@ -392,6 +392,8 @@ class AchievementTrackerTests(unittest.TestCase):
                     {'currencyID':3443,'name':'Veteran Mistcrest','quantity':110},
                     {'currencyID':3446,'name':'Myth Mistcrest','quantity':10},
                 ],
+                'currencies': {'available':True,'entries':[{'currencyID':9000,'name':'Other Token','quantity':1}]},
+                'reputations': {'available':True,'entries':[{'factionID':2507,'name':'Dornogal','reaction':5}]},
                 'currentSpellbook': {'available':True,'scope':'current_character_active_specialization','spells':[{'spellID':17364,'name':'Stormstrike','skillLine':'Enhancement'},{'spellID':51490,'name':'Thunderstorm','skillLine':'Elemental','isOffSpec':True}]},
                 'decorInventory': {'available':True,'items':[{'decorID':77,'name':'Warm Chair','storedCount':2,'placedCount':1}]},
                 'questLog': {'available':True,'totalQuests':1,'entries':[{'questID':123,'title':'A Current Quest','objectives':[]}]},
@@ -403,6 +405,7 @@ class AchievementTrackerTests(unittest.TestCase):
             self.assertEqual((summary['equipmentCount'], summary['bagItemCount'], summary['currencyCapCount'], summary['decorItemCount'], summary['questLogCount']), (0, 0, 8, 1, 1))
             self.assertEqual((summary['professionRecipeCount'], summary['professionSkillLineCount']), (1, 1))
             self.assertEqual(summary['currentSpellCount'], 2)
+            self.assertEqual((summary['currencyCount'], summary['reputationCount']), (1, 1))
             self.assertFalse(detail['snapshot']['exportOptions']['vault'])
             self.assertTrue(detail['snapshot']['currentSpellbook']['spells'][1]['isOffSpec'])
             self.assertEqual(detail['snapshot']['decorInventory']['items'][0]['storedCount'], 2)

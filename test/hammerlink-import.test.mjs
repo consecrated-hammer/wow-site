@@ -111,6 +111,17 @@ test('accepts every occupied bag slot, with rich gear metadata where available',
   assert.equal(decoded.bagEquipment[1].inventoryType, undefined);
 });
 
+test('accepts bounded current-currency and reputation observations', async () => {
+  const snapshot = parseHammerLinkExport(await fixture(), { now });
+  snapshot.currencies = { available: true, capturedAt: snapshot.capturedAt, truncated: false, entries: [{ currencyID: 3000, name: 'Traveler Coin', quantity: 17, isAccountWide: true }] };
+  snapshot.reputations = { available: true, capturedAt: snapshot.capturedAt, truncated: false, entries: [{ factionID: 2507, name: 'Dornogal', reaction: 5, currentStanding: 6000, currentReactionThreshold: 3000, nextReactionThreshold: 9000, isWatched: true }] };
+  const decoded = parseHammerLinkExport(exportSnapshot(snapshot), { now });
+  assert.equal(decoded.currencies.entries[0].quantity, 17);
+  assert.equal(decoded.reputations.entries[0].factionID, 2507);
+  snapshot.reputations.entries[0] = { factionID: 9999, name: 'Hostile faction', reaction: 2, currentStanding: -3000, currentReactionThreshold: -6000, nextReactionThreshold: 0 };
+  assert.equal(parseHammerLinkExport(exportSnapshot(snapshot), { now }).reputations.entries[0].currentStanding, -3000);
+});
+
 test('accepts an occupied bag item whose optional client name is blank or null', async () => {
   const snapshot = parseHammerLinkExport(await fixture(), { now });
   snapshot.bagEquipment = [{

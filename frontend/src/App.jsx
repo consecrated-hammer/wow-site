@@ -611,6 +611,10 @@ function HammerLinkImport() {
   const character = snapshot?.character;
   const vaultActivities = snapshot?.vault?.activities || [];
   const currencyCaps = snapshot?.currencyCaps || [];
+  const currencies = snapshot?.currencies;
+  const currencyEntries = currencies?.entries || [];
+  const reputations = snapshot?.reputations;
+  const reputationEntries = reputations?.entries || [];
   const decorInventory = snapshot?.decorInventory;
   const decorItems = decorInventory?.items || [];
   const questLog = snapshot?.questLog;
@@ -624,6 +628,8 @@ function HammerLinkImport() {
   const filteredEquipment = useMemo(() => (snapshot?.equipment || []).filter((item) => hammerLinkSearchMatches(item, normalisedQuery)), [snapshot, normalisedQuery]);
   const filteredBagEquipment = useMemo(() => (snapshot?.bagEquipment || []).filter((item) => hammerLinkSearchMatches(item, normalisedQuery)), [snapshot, normalisedQuery]);
   const filteredCurrencyCaps = useMemo(() => currencyCaps.filter((item) => hammerLinkSearchMatches(item, normalisedQuery)), [currencyCaps, normalisedQuery]);
+  const filteredCurrencies = useMemo(() => currencyEntries.filter((item) => hammerLinkSearchMatches(item, normalisedQuery)), [currencyEntries, normalisedQuery]);
+  const filteredReputations = useMemo(() => reputationEntries.filter((item) => hammerLinkSearchMatches(item, normalisedQuery)), [reputationEntries, normalisedQuery]);
   const filteredDecorItems = useMemo(() => decorItems.filter((item) => hammerLinkSearchMatches(item, normalisedQuery)), [decorItems, normalisedQuery]);
   const filteredQuestEntries = useMemo(() => questEntries.filter((item) => hammerLinkSearchMatches(item, normalisedQuery)), [questEntries, normalisedQuery]);
   const filteredCurrentSpells = useMemo(() => currentSpells.filter((item) => hammerLinkSearchMatches(item, normalisedQuery)), [currentSpells, normalisedQuery]);
@@ -638,7 +644,7 @@ function HammerLinkImport() {
     <Shell>
       <main className="hammerlink-page">
         <section className="hammerlink-masthead">
-          <div><span className="ledger-eyebrow">LIVE ADDON SNAPSHOT</span><h1>HammerLink import</h1><p>Bring this character’s selected in-game gear, bags, spellbook, talents, Vault state, currencies, Housing decor and cached profession observations into your private account.</p></div>
+          <div><span className="ledger-eyebrow">LIVE ADDON SNAPSHOT</span><h1>HammerLink import</h1><p>Bring this character’s selected in-game gear, bags, spellbook, talents, Vault state, currencies, reputations, Housing decor and cached profession observations into your private account.</p></div>
           <a className="hammerlink-project-link" href="https://www.curseforge.com/wow/addons/hammerlink" target="_blank" rel="noreferrer"><span><strong>Get HammerLink</strong><small>CurseForge project</small></span><ExternalLink size={16} aria-hidden="true" /></a>
         </section>
 
@@ -679,19 +685,31 @@ function HammerLinkImport() {
                 <article><span>Great Vault</span><strong>{detail.vaultActivityCount}</strong><small>Activity rows captured</small></article>
                 <article><span>Talents</span><strong>{detail.hasTalentImport ? "Yes" : "—"}</strong><small>{detail.hasTalentImport ? "Active loadout captured" : "Not available"}</small></article>
                 <article><span>Currency caps</span><strong>{detail.currencyCapCount ?? currencyCaps.length}</strong><small>Crests and other limits</small></article>
+                <article><span>Currencies</span><strong>{detail.currencyCount ?? currencyEntries.length}</strong><small>Current wallet entries</small></article>
+                <article><span>Reputations</span><strong>{detail.reputationCount ?? reputationEntries.length}</strong><small>Visible faction standings</small></article>
                 <article><span>Housing decor</span><strong>{detail.decorItemCount ?? decorItems.length}</strong><small>Owned catalog entries</small></article>
                 <article><span>Quest log</span><strong>{detail.questLogCount ?? questEntries.length}</strong><small>Current active quests</small></article>
                 <article><span>Current spells</span><strong>{detail.currentSpellCount ?? currentSpells.length}</strong><small>Client-exposed spellbook</small></article>
                 <article><span>Profession entries</span><strong>{detail.professionRecipeCount ?? professionRecipeCount}</strong><small>{detail.professionSkillLineCount ?? professionLines.length} cached skill lines</small></article>
               </div>
 
-              <label className="hammerlink-snapshot-search"><Search size={16} aria-hidden="true" /><span className="sr-only">Search this snapshot</span><input value={snapshotQuery} onChange={(event) => setSnapshotQuery(event.target.value)} placeholder="Search gear, bags, spells, currencies, decor, professions, quests, Vault or talents" />{snapshotQuery ? <button type="button" onClick={() => setSnapshotQuery("")} aria-label="Clear snapshot search"><X size={15} /></button> : null}</label>
+              <label className="hammerlink-snapshot-search"><Search size={16} aria-hidden="true" /><span className="sr-only">Search this snapshot</span><input value={snapshotQuery} onChange={(event) => setSnapshotQuery(event.target.value)} placeholder="Search gear, bags, spells, currencies, reputations, decor, professions, quests, Vault or talents" />{snapshotQuery ? <button type="button" onClick={() => setSnapshotQuery("")} aria-label="Clear snapshot search"><X size={15} /></button> : null}</label>
 
               <HammerLinkSection eyebrow="CHARACTER GEAR" title="Currently equipped" summary={countSummary(filteredEquipment.length, snapshot.equipment?.length || 0, "items")}><HammerLinkGearTable items={filteredEquipment} /></HammerLinkSection>
               <HammerLinkSection eyebrow="BAG SCAN" title="All items in bags" summary={countSummary(filteredBagEquipment.length, snapshot.bagEquipment?.length || 0, "items")} defaultOpen={false}><HammerLinkGearTable items={filteredBagEquipment} bagGear /></HammerLinkSection>
 
               <HammerLinkSection eyebrow="CURRENCY CAPS" title="Crests and capped currencies" summary={countSummary(filteredCurrencyCaps.length, currencyCaps.length, "records")}>
                 {filteredCurrencyCaps.length ? <div className="hammerlink-currency-list">{filteredCurrencyCaps.map((currency) => <div key={currency.currencyID}><strong>{currency.name}</strong><span>{currency.quantity ?? "—"} current</span><small>{hammerLinkCurrencyCapDetails(currency)}</small></div>)}</div> : <p className="hammerlink-empty-row">{normalisedQuery ? "No currency records match this search." : snapshot.exportOptions?.currencyCaps === false ? "Currency caps were excluded in this export." : "No capped currency records were available from the client."}</p>}
+              </HammerLinkSection>
+
+              <HammerLinkSection eyebrow="CURRENT CURRENCIES" title="Current wallet entries" summary={`${countSummary(filteredCurrencies.length, currencyEntries.length, "currencies")}${currencies?.truncated ? " · export limit reached" : ""}`} defaultOpen={false}>
+                {filteredCurrencies.length ? <div className="hammerlink-currency-list">{filteredCurrencies.map((currency) => <div key={currency.currencyID}><strong>{currency.name}</strong><span>{currency.quantity ?? "—"} current</span><small>Currency #{currency.currencyID}{currency.isAccountWide ? " · account-wide" : ""}{currency.isAccountTransferable ? " · transferable" : ""}</small></div>)}</div> : <p className="hammerlink-empty-row">{normalisedQuery ? "No current currencies match this search." : snapshot.exportOptions?.currencies === false ? "Current currencies were excluded in this export." : currencies?.reason || "No current currency entries were available from the client."}</p>}
+                <p className="hammerlink-scope-note">A point-in-time list from Retail’s visible currency pane. It is not transaction history or a complete account-wide balance.</p>
+              </HammerLinkSection>
+
+              <HammerLinkSection eyebrow="CURRENT REPUTATIONS" title="Visible faction standings" summary={`${countSummary(filteredReputations.length, reputationEntries.length, "factions")}${reputations?.truncated ? " · export limit reached" : ""}`} defaultOpen={false}>
+                {filteredReputations.length ? <div className="hammerlink-currency-list">{filteredReputations.map((reputation) => <div key={reputation.factionID}><strong>{reputation.name}</strong><span>{reputation.currentStanding != null && reputation.currentReactionThreshold != null && reputation.nextReactionThreshold != null ? `${reputation.currentStanding - reputation.currentReactionThreshold} / ${reputation.nextReactionThreshold - reputation.currentReactionThreshold}` : reputation.reaction != null ? `Standing ${reputation.reaction}` : "Standing unavailable"}</span><small>Faction #{reputation.factionID}{reputation.isMajorFaction ? " · major faction" : ""}{reputation.isWatched ? " · watched" : ""}</small></div>)}</div> : <p className="hammerlink-empty-row">{normalisedQuery ? "No reputation entries match this search." : snapshot.exportOptions?.reputations === false ? "Reputations were excluded in this export." : reputations?.reason || "No reputation entries were available from the client."}</p>}
+                <p className="hammerlink-scope-note">A point-in-time list of visible Retail faction standings. Missing factions and unavailable standing fields remain unknown.</p>
               </HammerLinkSection>
 
               <HammerLinkSection eyebrow="CURRENT SPELLBOOK" title="Client-exposed spells and abilities" summary={`${countSummary(filteredCurrentSpells.length, currentSpells.length, "spells")}${currentSpellbook?.truncated ? " · export limit reached" : ""}`} defaultOpen={false}>
